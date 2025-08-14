@@ -9,7 +9,7 @@ import SDL "vendor:sdl3"
 
 Handmade_State :: struct {
 	window : ^SDL.Window,
-	renderer : ^SDL.Renderer, // Maybe this should be a software renderer
+	renderer : ^SDL.Renderer,
 	resize_count : u32,
 }
 state : Handmade_State
@@ -20,11 +20,16 @@ main :: proc() {
 			SDL.Log("SDL Initialization Failed!")
 			return SDL.AppResult.FAILURE;
 		}
-		if !SDL.CreateWindowAndRenderer("Handmade Hero", 640, 480, nil, window = &state.window, renderer = &state.renderer) {
-			SDL.Log("Window/Renderer creation Failed!")
+		state.window = SDL.CreateWindow("Handmade Hero", 640, 480, flags = {.RESIZABLE})
+		if state.window == nil {
+			SDL.Log("Window creation Failed!")
 			return SDL.AppResult.FAILURE
 		}
-		SDL.SetWindowResizable(state.window, true)
+		state.renderer = SDL.CreateRenderer(state.window, "software")
+		if state.renderer == nil {
+			SDL.Log("Renderer creation Failed!")
+			return SDL.AppResult.FAILURE
+		}
 		SDL.SetRenderVSync(state.renderer, 1);
 		return SDL.AppResult.CONTINUE
 	}
@@ -33,7 +38,7 @@ main :: proc() {
 		context = runtime.default_context()
 
 
-		if state.resize_count % 2 == 0 do SDL.SetRenderDrawColor(state.renderer, 0, 0, 0, 255); else do SDL.SetRenderDrawColor(state.renderer, 255, 0, 0, 255)
+		if state.resize_count % 2 == 0 do SDL.SetRenderDrawColor(state.renderer, 0, 255, 0, 255); else do SDL.SetRenderDrawColor(state.renderer, 255, 0, 0, 255)
 		SDL.RenderClear(state.renderer)
 
 		//rect := SDL.FRect{10, 10, 100, 100}
