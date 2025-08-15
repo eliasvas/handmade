@@ -1,27 +1,71 @@
 package main
 import "base:runtime"
 import "core:fmt"
+import "base:intrinsics"
 import "core:strings"
 import "core:time"
 import "core:c"
 
 import SDL "vendor:sdl3"
 
-// TODO: can we query a specific pixel format for our surface? It would be pretty neat.
 SDL_Handmade_State :: struct {
 	window : ^SDL.Window,
 	renderer : ^SDL.Renderer,
-	resize_count : u32,
 
 	offset_x : i32,
 	offset_y : i32,
 
-	bitmap_memory : []u32,
+	backbuffer : SDL_Offscreen_Buffer,
 }
 state : SDL_Handmade_State
 
+Pixel_Format_Info :: struct{
+	r_shift : u8,
+	g_shift : u8,
+	b_shift : u8,
+}
+SDL_Offscreen_Buffer :: struct {
+	px_info : Pixel_Format_Info,
+	bitmap_memory : []u32,
+	dim : [2]u32,
+	bytes_per_pixel : u32,
+}
+
+// Will delete previous offscreen buffer and allocate a new one for us
+SDL_resize_offscreen_buffer :: proc(buffer : ^SDL_Offscreen_Buffer, new_dim : [2]u32) {
+	if len(buffer.bitmap_memory) > 0 {
+		delete(buffer.bitmap_memory)
+	}
+
+	surface := SDL.GetWindowSurface(state.window);
+	pixel_format_details := SDL.GetPixelFormatDetails(surface.format)
+
+	buffer.dim = new_dim
+	buffer.bytes_per_pixel = 4
+	buffer.bitmap_memory = make([]u32, buffer.dim.x*buffer.dim.y*buffer.bytes_per_pixel)
+	buffer.px_info = Pixel_Format_Info{
+		r_shift = pixel_format_details.Rshift,
+		g_shift = pixel_format_details.Gshift,
+		b_shift = pixel_format_details.Bshift,
+	}
+}
+
+// Will write the contents of our offscreen buffer to the window's surface
+SDL_display_buffer_to_window :: proc(window : ^SDL.Window, buffer : ^SDL_Offscreen_Buffer) {
+	surface := SDL.GetWindowSurface(state.window);
+	if surface != nil{
+		intrinsics.mem_copy(
+			surface.pixels,
+			&state.backbuffer.bitmap_memory[0],
+			len(state.backbuffer.bitmap_memory)
+		)
+	}
+}
+
 main :: proc() {
 	init := proc "c" (appstate: ^rawptr, argc: c.int, argv: [^]cstring) -> SDL.AppResult {
+		context = runtime.default_context()
+
 		if !SDL.Init(SDL.INIT_VIDEO) {
 			SDL.Log("SDL Initialization Failed!")
 			return SDL.AppResult.FAILURE;
@@ -38,10 +82,11 @@ main :: proc() {
 		}
 		SDL.SetRenderVSync(state.renderer, 1);
 
-		surface := SDL.GetWindowSurface(state.window);
-		if surface != nil {
-			state.bitmap_memory = ([^]u32)(surface.pixels)[:surface.w*surface.h]
-		}
+		w,h : i32
+		SDL.GetWindowSize(state.window, &w, &h)
+		SDL_resize_offscreen_buffer(&state.backbuffer, {u32(w), u32(h)})
+
+
 
 		return SDL.AppResult.CONTINUE
 	}
@@ -51,35 +96,32 @@ main :: proc() {
 
 		state.offset_x+=1
 
-		// Clear the surface pixels to RED
-		surface := SDL.GetWindowSurface(state.window);
-		if surface != nil {
-			pixel_format_details := SDL.GetPixelFormatDetails(surface.format)
-			SDL.FillSurfaceRect(surface, nil, SDL.MapRGB(pixel_format_details, nil, 0, 0, 0))
-
-			// Draw a simple pattern directly to surface's backbuffer
-			for y in 0..<surface.h {
-				for x in 0..<surface.w {
-					color := SDL.MapRGB(pixel_format_details, nil, 0, u8(x + state.offset_x), u8(y + state.offset_y))
-					state.bitmap_memory[i32(y) * (surface.pitch / size_of(u32)) + i32(x)] = color;
-				}
+		// Update with our backbuffer's colors
+		for y in 0..<state.backbuffer.dim[1] {
+			for x in 0..<state.backbuffer.dim[0] {
+				pitch_in_u32 := state.backbuffer.dim[0]
+				color :=
+					(u32(i32(x)%255+state.offset_x) << state.backbuffer.px_info.g_shift) |
+					(u32(i32(y)%255+state.offset_y) << state.backbuffer.px_info.b_shift)
+				state.backbuffer.bitmap_memory[u32(y) * pitch_in_u32 + u32(x)] = color;
 			}
-
-			// TODO: Can't we just update the surface? not the window
-			SDL.RenderPresent(state.renderer)
 		}
+
+		SDL_display_buffer_to_window(state.window, &state.backbuffer)
+		SDL.RenderPresent(state.renderer)
 
 		return SDL.AppResult.CONTINUE;
 	}
 	events := proc "c" (appstate: rawptr, event: ^SDL.Event) -> SDL.AppResult {
+		context = runtime.default_context()
+
 		if event.type == SDL.EventType.QUIT {
 			return SDL.AppResult.SUCCESS;
 		} else if event.type == SDL.EventType.WINDOW_RESIZED {
-			surface := SDL.GetWindowSurface(state.window);
-			if surface != nil {
-				state.bitmap_memory = ([^]u32)(surface.pixels)[:surface.w*surface.h]
-			}
-			state.resize_count += 1
+			// Resize our backbuffer with new window dimensions
+			w,h : i32
+			SDL.GetWindowSize(state.window, &w, &h)
+			SDL_resize_offscreen_buffer(&state.backbuffer, {u32(w), u32(h)})
 		}
 
 		return SDL.AppResult.CONTINUE;
