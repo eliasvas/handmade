@@ -7,12 +7,18 @@ import "core:c"
 
 import SDL "vendor:sdl3"
 
-Handmade_State :: struct {
+// TODO: can we query a specific pixel format for our surface? It would be pretty neat.
+SDL_Handmade_State :: struct {
 	window : ^SDL.Window,
 	renderer : ^SDL.Renderer,
 	resize_count : u32,
+
+	offset_x : i32,
+	offset_y : i32,
+
+	bitmap_memory : []u32,
 }
-state : Handmade_State
+state : SDL_Handmade_State
 
 main :: proc() {
 	init := proc "c" (appstate: ^rawptr, argc: c.int, argv: [^]cstring) -> SDL.AppResult {
@@ -31,20 +37,37 @@ main :: proc() {
 			return SDL.AppResult.FAILURE
 		}
 		SDL.SetRenderVSync(state.renderer, 1);
+
+		surface := SDL.GetWindowSurface(state.window);
+		if surface != nil {
+			state.bitmap_memory = ([^]u32)(surface.pixels)[:surface.w*surface.h]
+		}
+
 		return SDL.AppResult.CONTINUE
 	}
 
 	iter := proc "c" (appstate: rawptr) -> SDL.AppResult  {
 		context = runtime.default_context()
 
+		state.offset_x+=1
 
-		if state.resize_count % 2 == 0 do SDL.SetRenderDrawColor(state.renderer, 0, 255, 0, 255); else do SDL.SetRenderDrawColor(state.renderer, 255, 0, 0, 255)
-		SDL.RenderClear(state.renderer)
+		// Clear the surface pixels to RED
+		surface := SDL.GetWindowSurface(state.window);
+		if surface != nil {
+			pixel_format_details := SDL.GetPixelFormatDetails(surface.format)
+			SDL.FillSurfaceRect(surface, nil, SDL.MapRGB(pixel_format_details, nil, 0, 0, 0))
 
-		//rect := SDL.FRect{10, 10, 100, 100}
-		//SDL.RenderFillRect(state.renderer, &rect)
+			// Draw a simple pattern directly to surface's backbuffer
+			for y in 0..<surface.h {
+				for x in 0..<surface.w {
+					color := SDL.MapRGB(pixel_format_details, nil, 0, u8(x + state.offset_x), u8(y + state.offset_y))
+					state.bitmap_memory[i32(y) * (surface.pitch / size_of(u32)) + i32(x)] = color;
+				}
+			}
 
-		SDL.RenderPresent(state.renderer)
+			// TODO: Can't we just update the surface? not the window
+			SDL.RenderPresent(state.renderer)
+		}
 
 		return SDL.AppResult.CONTINUE;
 	}
@@ -52,13 +75,20 @@ main :: proc() {
 		if event.type == SDL.EventType.QUIT {
 			return SDL.AppResult.SUCCESS;
 		} else if event.type == SDL.EventType.WINDOW_RESIZED {
+			surface := SDL.GetWindowSurface(state.window);
+			if surface != nil {
+				state.bitmap_memory = ([^]u32)(surface.pixels)[:surface.w*surface.h]
+			}
 			state.resize_count += 1
 		}
 
 		return SDL.AppResult.CONTINUE;
 	}
 
-	quit := proc "c" (appstate: rawptr, r: SDL.AppResult) {}
+	quit := proc "c" (appstate: rawptr, r: SDL.AppResult) {
+		context = runtime.default_context()
+		fmt.println("quit")
+	}
 
 	SDL.EnterAppMainCallbacks(0, nil, init, iter, events, quit)
 }
