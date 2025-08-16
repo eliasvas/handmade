@@ -4,6 +4,7 @@ import "core:fmt"
 import "base:intrinsics"
 import "core:strings"
 import "core:time"
+import "core:math"
 import "core:c"
 
 import SDL "vendor:sdl3"
@@ -167,10 +168,10 @@ main :: proc() {
 			samples : [512] f32
 			// We generate a simple 440Hz pure tone?
 			for &sample, idx in samples {
-				freq := 440
+				freq := 1000
 				phase := state.current_sine_sample*freq / 8000
 				PI :: 3.14
-				sample = SDL.sinf(f32(phase)*2*PI)
+				sample = math.sign(SDL.sinf(f32(phase)*2*PI)) / 2
 				state.current_sine_sample+=1
 
 			}
