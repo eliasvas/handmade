@@ -8,9 +8,16 @@ import "core:c"
 
 import SDL "vendor:sdl3"
 
+// TODO: for audio, maybe the callback is better approach https://github.com/libsdl-org/SDL/blob/main/examples/audio/02-simple-playback-callback/simple-playback-callback.c
+// TODO: also wavs https://github.com/libsdl-org/SDL/blob/main/examples/audio/03-load-wav/load-wav.c
+
 SDL_Handmade_State :: struct {
 	window : ^SDL.Window,
 	renderer : ^SDL.Renderer,
+
+	// Audio stuff (will probably change)
+	stream : ^SDL.AudioStream,
+	current_sine_sample : int,
 
 	offset_x : i32,
 	offset_y : i32,
@@ -68,27 +75,43 @@ main :: proc() {
 	init := proc "c" (appstate: ^rawptr, argc: c.int, argv: [^]cstring) -> SDL.AppResult {
 		context = runtime.default_context()
 
-		if !SDL.Init(SDL.INIT_VIDEO | SDL.INIT_GAMEPAD) {
+		// Initialize all SDL subsystems
+		if !SDL.Init(SDL.INIT_VIDEO | SDL.INIT_GAMEPAD | SDL.INIT_AUDIO) {
 			SDL.Log("SDL Initialization Failed!")
 			return SDL.AppResult.FAILURE;
 		}
+		// Create a window
 		state.window = SDL.CreateWindow("Handmade Hero", 640, 480, flags = {.RESIZABLE})
 		if state.window == nil {
 			SDL.Log("Window creation Failed!")
 			return SDL.AppResult.FAILURE
 		}
+		// Create a renderer
 		state.renderer = SDL.CreateRenderer(state.window, "software")
 		if state.renderer == nil {
 			SDL.Log("Renderer creation Failed!")
 			return SDL.AppResult.FAILURE
 		}
-		SDL.SetRenderVSync(state.renderer, 1);
+		SDL.SetRenderVSync(state.renderer, 1)
 
+		// Initialize audio as mono with float32 data, sampling them at 8000Hz
+		spec := SDL.AudioSpec{
+			channels = 1,
+			format = .F32,
+			freq = 8000,
+		}
+		state.stream = SDL.OpenAudioDeviceStream(SDL.AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nil, nil)
+		if state.stream == nil {
+			SDL.Log("Audio stream creation Failed!")
+			return SDL.AppResult.FAILURE
+		}
+		// OpenAudioDeviceStream starts at paused state, we need to start it manually..
+		SDL.ResumeAudioStreamDevice(state.stream);
+
+		// Make our initial backbuffer
 		w,h : i32
 		SDL.GetWindowSize(state.window, &w, &h)
 		SDL_resize_offscreen_buffer(&state.backbuffer, {u32(w), u32(h)})
-
-
 
 		return SDL.AppResult.CONTINUE
 	}
@@ -136,6 +159,27 @@ main :: proc() {
 			dpad_right := SDL.GetGamepadButton(gamepad, .DPAD_RIGHT);
 			dpad_left  := SDL.GetGamepadButton(gamepad, .DPAD_LEFT);
 		}
+
+		// Feed our audio stream if need be
+		minimum_audio := 8000 * size_of(f32) / 2
+		if SDL.GetAudioStreamQueued(state.stream) < i32(minimum_audio) {
+			// Right now we are feeding 512 samples if there is less than half a second queued
+			samples : [512] f32
+			// We generate a simple 440Hz pure tone?
+			for &sample, idx in samples {
+				freq := 440
+				phase := state.current_sine_sample*freq / 8000
+				PI :: 3.14
+				sample = SDL.sinf(f32(phase)*2*PI)
+				state.current_sine_sample+=1
+
+			}
+			// to avoid floating point rounding errors
+			state.current_sine_sample %= 8000;
+			SDL.PutAudioStreamData(state.stream, &samples[0], len(samples));
+		}
+
+
 
 		return SDL.AppResult.CONTINUE;
 	}
