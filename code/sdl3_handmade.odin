@@ -124,6 +124,8 @@ main :: proc() {
 	iter := proc "c" (appstate: rawptr) -> SDL.AppResult  {
 		context = runtime.default_context()
 
+    frame_start := SDL.GetPerformanceCounter()
+
 		state.offset_x+=1
 
 		// Update with our backbuffer's colors
@@ -183,6 +185,13 @@ main :: proc() {
 			SDL.PutAudioStreamData(state.stream, &samples[0], len(samples) * size_of(f32));
 		}
 
+    // Helper to print timing stuff
+    frame_end := SDL.GetPerformanceCounter()
+    count := frame_end - frame_start
+    freq := SDL.GetPerformanceFrequency()
+    ms_per_frame := 1000.0 * (f64(count) / f64(freq))
+    fps:= (f64(freq) / f64(count))
+    fmt.printf("ms: %.2f - fps: %.2f\n", ms_per_frame, fps)
 
 
 		return SDL.AppResult.CONTINUE;
