@@ -1,4 +1,5 @@
-package main
+package handmade
+
 import "base:runtime"
 import "core:fmt"
 import "base:intrinsics"
@@ -114,6 +115,9 @@ main :: proc() {
 		SDL.GetWindowSize(state.window, &w, &h)
 		SDL_resize_offscreen_buffer(&state.backbuffer, {u32(w), u32(h)})
 
+    // Test out our wav functionality
+    //wav_test()
+
 		return SDL.AppResult.CONTINUE
 	}
 
@@ -167,17 +171,16 @@ main :: proc() {
 			// Right now we are feeding 512 samples if there is less than half a second queued
 			samples : [512] f32
 			// We generate a simple 440Hz pure tone?
+      volume := f32(0.005)
 			for &sample, idx in samples {
-				freq := 1000
-				phase := state.current_sine_sample*freq / 8000
-				PI :: 3.14
-				sample = math.sign(SDL.sinf(f32(phase)*2*PI)) / 2
+				freq := 440
+				phase := f32(state.current_sine_sample*freq) / f32(8000)
+				sample = SDL.sinf(phase*2*math.PI) * volume
 				state.current_sine_sample+=1
-
 			}
 			// to avoid floating point rounding errors
 			state.current_sine_sample %= 8000;
-			SDL.PutAudioStreamData(state.stream, &samples[0], len(samples));
+			SDL.PutAudioStreamData(state.stream, &samples[0], len(samples) * size_of(f32));
 		}
 
 
