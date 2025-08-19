@@ -124,20 +124,12 @@ main :: proc() {
 	iter := proc "c" (appstate: rawptr) -> SDL.AppResult  {
 		context = runtime.default_context()
 
-    frame_start := SDL.GetPerformanceCounter()
+		frame_start := SDL.GetPerformanceCounter()
 
 		state.offset_x+=1
 
-		// Update with our backbuffer's colors
-		for y in 0..<state.backbuffer.dim[1] {
-			for x in 0..<state.backbuffer.dim[0] {
-				pitch_in_u32 := state.backbuffer.dim[0]
-				color :=
-					(u32(i32(x)%255+state.offset_x)%255 << state.backbuffer.px_info.g_shift) |
-					(u32(i32(y)%255+state.offset_y)%255 << state.backbuffer.px_info.b_shift)
-				state.backbuffer.bitmap_memory[u32(y) * pitch_in_u32 + u32(x)] = color;
-			}
-		}
+		// call update_and_render from platform agnostic code!
+		game_update_and_render(&state.backbuffer, state.offset_x, state.offset_y)
 
 		SDL_display_buffer_to_window(state.window, &state.backbuffer)
 		SDL.RenderPresent(state.renderer)
