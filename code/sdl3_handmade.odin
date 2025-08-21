@@ -17,9 +17,7 @@ SDL_Handmade_State :: struct {
 	window : ^SDL.Window,
 	renderer : ^SDL.Renderer,
 
-	// Audio stuff (will probably change)
-	stream : ^SDL.AudioStream,
-	current_sine_sample : int,
+	audio_out : SDL_Audio_Output_Buffer,
 
 	offset_x : i32,
 	offset_y : i32,
@@ -38,6 +36,15 @@ SDL_Offscreen_Buffer :: struct {
 	bitmap_memory : []u32,
 	dim : [2]u32,
 	bytes_per_pixel : u32,
+}
+
+SDL_Audio_Output_Buffer :: struct {
+	stream : ^SDL.AudioStream,
+	current_sine_sample : int, // simple srunning counter .. maybe we should deprecate
+
+	channel_num : i32, // MONO=1, STEREO=2 etc
+	sample_rate : i32, // e.g 8000Hz
+	format : SDL.AudioFormat, // maybe we should just support F32 or S16 by default..
 }
 
 // Will delete previous offscreen buffer and allocate a new one for us
@@ -96,19 +103,24 @@ main :: proc() {
 		}
 		SDL.SetRenderVSync(state.renderer, 1)
 
-		// Initialize audio as mono with float32 data, sampling them at 8000Hz
-		spec := SDL.AudioSpec{
-			channels = 1,
+		audio_out := SDL_Audio_Output_Buffer{
+			channel_num = 1,
+			sample_rate = 8000,
 			format = .F32,
-			freq = 8000,
 		}
-		state.stream = SDL.OpenAudioDeviceStream(SDL.AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nil, nil)
-		if state.stream == nil {
+		spec := SDL.AudioSpec{
+			channels = audio_out.channel_num,
+			format = audio_out.format,
+			freq = audio_out.sample_rate,
+		}
+		audio_out.stream = SDL.OpenAudioDeviceStream(SDL.AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nil, nil)
+		if audio_out.stream == nil {
 			SDL.Log("Audio stream creation Failed!")
 			return SDL.AppResult.FAILURE
 		}
 		// OpenAudioDeviceStream starts at paused state, we need to start it manually..
-		SDL.ResumeAudioStreamDevice(state.stream);
+		SDL.ResumeAudioStreamDevice(audio_out.stream);
+		state.audio_out = audio_out
 
 		// Make our initial backbuffer
 		w,h : i32
@@ -126,13 +138,8 @@ main :: proc() {
 
 		frame_start := SDL.GetPerformanceCounter()
 
+		// TODO: remove this
 		state.offset_x+=1
-
-		// call update_and_render from platform agnostic code!
-		game_update_and_render(&state.backbuffer, state.offset_x, state.offset_y)
-
-		SDL_display_buffer_to_window(state.window, &state.backbuffer)
-		SDL.RenderPresent(state.renderer)
 
 		// Do gamepad stuff
 		//SDL.UpdateGamepads()
@@ -160,22 +167,34 @@ main :: proc() {
 		}
 
 		// Feed our audio stream if need be
-		minimum_audio := 8000 * size_of(f32) / 2
-		if SDL.GetAudioStreamQueued(state.stream) < i32(minimum_audio) {
-			// Right now we are feeding 512 samples if there is less than half a second queued
-			samples : [512] f32
-			// We generate a simple 440Hz pure tone?
-      volume := f32(0.005)
-			for &sample, idx in samples {
-				freq := 440
-				phase := f32(state.current_sine_sample*freq) / f32(8000)
-				sample = SDL.sinf(phase*2*math.PI) * volume
-				state.current_sine_sample+=1
-			}
-			// to avoid floating point rounding errors
-			state.current_sine_sample %= 8000;
-			SDL.PutAudioStreamData(state.stream, &samples[0], len(samples) * size_of(f32));
+		game_audio_out := Game_Audio_Output_Buffer{
+			sample_rate = state.audio_out.sample_rate,
+			current_sine_sample = state.audio_out.current_sine_sample,
+			channel_num = state.audio_out.channel_num,
+			samples_to_write = make([]f32, 0)
 		}
+		defer delete(game_audio_out.samples_to_write)
+
+		// optionally provide audio samples for the game to fill
+		minimum_audio := state.audio_out.sample_rate * size_of(f32) / 2
+		// TODO: latency is too big, also we MUST make sure the samples game writes are enough
+		queued_samples_count := SDL.GetAudioStreamQueued(state.audio_out.stream)
+		if queued_samples_count < i32(minimum_audio) {
+			game_audio_out.samples_to_write = make([]f32, 512)
+		}
+
+		// call update_and_render from platform agnostic code!
+		game_update_and_render(&state.backbuffer, &game_audio_out, state.offset_x, state.offset_y)
+		SDL_display_buffer_to_window(state.window, &state.backbuffer)
+		SDL.RenderPresent(state.renderer)
+		state.audio_out.current_sine_sample = game_audio_out.current_sine_sample
+
+		if queued_samples_count < i32(minimum_audio) {
+			// to avoid floating point rounding errors
+			state.audio_out.current_sine_sample %= int(state.audio_out.sample_rate);
+			SDL.PutAudioStreamData(state.audio_out.stream, &game_audio_out.samples_to_write[0], auto_cast len(game_audio_out.samples_to_write) * size_of(f32));
+		}
+
 
     // Helper to print timing stuff
     frame_end := SDL.GetPerformanceCounter()
@@ -223,3 +242,15 @@ main :: proc() {
 	SDL.EnterAppMainCallbacks(0, nil, init, iter, events, quit)
 }
 
+
+// The abstraction
+Game_Offscreen_Buffer :: SDL_Offscreen_Buffer
+Game_Audio_Output_Buffer :: struct {
+	current_sine_sample : int, // remove dis
+	channel_num : i32,
+	sample_rate : i32,
+
+	// game should write all these samples
+	// they will be updated to underlying osund buffer
+	samples_to_write : []f32,
+}
