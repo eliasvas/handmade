@@ -19,6 +19,8 @@ SDL_Handmade_State :: struct {
 
 	audio_out : SDL_Audio_Output_Buffer,
 
+	old_input : Game_Input,
+
 	offset_x : i32,
 	offset_y : i32,
 
@@ -141,6 +143,9 @@ main :: proc() {
 		// TODO: remove this
 		state.offset_x+=1
 
+		ginput : Game_Input
+		old_input : ^Game_Input = &state.old_input
+
 		// Do gamepad stuff
 		//SDL.UpdateGamepads()
 		gamepad_count : i32
@@ -164,6 +169,21 @@ main :: proc() {
 			dpad_down  := SDL.GetGamepadButton(gamepad, .DPAD_DOWN);
 			dpad_right := SDL.GetGamepadButton(gamepad, .DPAD_RIGHT);
 			dpad_left  := SDL.GetGamepadButton(gamepad, .DPAD_LEFT);
+
+			ginput.controllers[0].dpad_up = Game_Button_State{1, dpad_up}
+			ginput.controllers[0].dpad_down = Game_Button_State{1, dpad_down}
+			ginput.controllers[0].dpad_right = Game_Button_State{1, dpad_right}
+			ginput.controllers[0].dpad_left = Game_Button_State{1, dpad_left}
+
+			button_up := SDL.GetGamepadButton(gamepad, .NORTH);
+			button_down := SDL.GetGamepadButton(gamepad, .SOUTH);
+			button_left := SDL.GetGamepadButton(gamepad, .WEST);
+			button_right := SDL.GetGamepadButton(gamepad, .EAST);
+
+			ginput.controllers[0].button_up = Game_Button_State{1, button_up}
+			ginput.controllers[0].button_down = Game_Button_State{1, button_down}
+			ginput.controllers[0].button_left = Game_Button_State{1, button_left}
+			ginput.controllers[0].button_right = Game_Button_State{1, button_right}
 		}
 
 		// Feed our audio stream if need be
@@ -184,7 +204,7 @@ main :: proc() {
 		}
 
 		// call update_and_render from platform agnostic code!
-		game_update_and_render(&state.backbuffer, &game_audio_out, state.offset_x, state.offset_y)
+		game_update_and_render(&ginput, &state.backbuffer, &game_audio_out)
 		SDL_display_buffer_to_window(state.window, &state.backbuffer)
 		SDL.RenderPresent(state.renderer)
 		state.audio_out.current_sine_sample = game_audio_out.current_sine_sample
@@ -196,14 +216,16 @@ main :: proc() {
 		}
 
 
-    // Helper to print timing stuff
-    frame_end := SDL.GetPerformanceCounter()
-    count := frame_end - frame_start
-    freq := SDL.GetPerformanceFrequency()
-    ms_per_frame := 1000.0 * (f64(count) / f64(freq))
-    fps:= (f64(freq) / f64(count))
-    fmt.printf("ms: %.2f - fps: %.2f\n", ms_per_frame, fps)
+		// Helper to print timing stuff
+		frame_end := SDL.GetPerformanceCounter()
+		count := frame_end - frame_start
+		freq := SDL.GetPerformanceFrequency()
+		ms_per_frame := 1000.0 * (f64(count) / f64(freq))
+		fps:= (f64(freq) / f64(count))
+		fmt.printf("ms: %.2f - fps: %.2f\n", ms_per_frame, fps)
 
+		// Copy back our processed input to old input for next frame processing
+		state.old_input = ginput
 
 		return SDL.AppResult.CONTINUE;
 	}
@@ -253,4 +275,26 @@ Game_Audio_Output_Buffer :: struct {
 	// game should write all these samples
 	// they will be updated to underlying osund buffer
 	samples_to_write : []f32,
+}
+
+Game_Button_State :: struct {
+	half_transition_count : u32,
+	ended_down : bool,
+}
+
+Game_Controller_Input :: struct {
+	button_up : Game_Button_State,
+	button_down : Game_Button_State,
+	button_left : Game_Button_State,
+	button_right : Game_Button_State,
+
+	dpad_up : Game_Button_State,
+	dpad_down : Game_Button_State,
+	dpad_left : Game_Button_State,
+	dpad_right : Game_Button_State,
+}
+
+MAX_CONTROLLERS :: 4
+Game_Input :: struct {
+	controllers : [MAX_CONTROLLERS] Game_Controller_Input,
 }
