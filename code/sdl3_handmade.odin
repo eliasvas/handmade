@@ -2,6 +2,7 @@ package handmade
 
 import "base:runtime"
 import "core:fmt"
+import "core:mem"
 import "base:intrinsics"
 import "core:strings"
 import "core:time"
@@ -21,8 +22,7 @@ SDL_Handmade_State :: struct {
 
 	old_input : Game_Input,
 
-	offset_x : i32,
-	offset_y : i32,
+	game_memory : Game_Memory,
 
 	backbuffer : SDL_Offscreen_Buffer,
 }
@@ -129,8 +129,12 @@ main :: proc() {
 		SDL.GetWindowSize(state.window, &w, &h)
 		SDL_resize_offscreen_buffer(&state.backbuffer, {u32(w), u32(h)})
 
-    // Test out our wav functionality
-    //wav_test()
+		// Initialize the Game's memory (we will pass it though to game layer)
+		state.game_memory.permanent_storage,_ = mem.alloc(mem.Megabyte*64)
+		state.game_memory.transient_storage,_ = mem.alloc(mem.Gigabyte*1)
+
+		// Test out our wav functionality
+		//wav_test()
 
 		return SDL.AppResult.CONTINUE
 	}
@@ -140,8 +144,8 @@ main :: proc() {
 
 		frame_start := SDL.GetPerformanceCounter()
 
-		// TODO: remove this
-		state.offset_x+=1
+		// reset transient storage per-frame
+		state.game_memory.transient_storage_size = 0
 
 		ginput : Game_Input
 		old_input : ^Game_Input = &state.old_input
@@ -158,12 +162,6 @@ main :: proc() {
 			right_x := SDL.GetGamepadAxis(gamepad, .RIGHTX);
 			left_y := SDL.GetGamepadAxis(gamepad, .LEFTY);
 			right_y := SDL.GetGamepadAxis(gamepad, .RIGHTY);
-
-
-			state.offset_x += i32(right_x)
-			state.offset_x -= i32(left_x)
-			state.offset_y += i32(right_y)
-			state.offset_y -= i32(left_y)
 
 			dpad_up    := SDL.GetGamepadButton(gamepad, .DPAD_UP);
 			dpad_down  := SDL.GetGamepadButton(gamepad, .DPAD_DOWN);
@@ -204,7 +202,7 @@ main :: proc() {
 		}
 
 		// call update_and_render from platform agnostic code!
-		game_update_and_render(&ginput, &state.backbuffer, &game_audio_out)
+		game_update_and_render(&state.game_memory, &ginput, &state.backbuffer, &game_audio_out)
 		SDL_display_buffer_to_window(state.window, &state.backbuffer)
 		SDL.RenderPresent(state.renderer)
 		state.audio_out.current_sine_sample = game_audio_out.current_sine_sample
@@ -246,10 +244,7 @@ main :: proc() {
 				return SDL.AppResult.SUCCESS;
             }
 			if is_down {
-				if kevent.key == SDL.K_UP do state.offset_y -= 10
-				if kevent.key == SDL.K_DOWN do state.offset_y += 10
-				if kevent.key == SDL.K_LEFT do state.offset_x -= 10
-				if kevent.key == SDL.K_RIGHT do state.offset_x += 10
+				// TODO: pass to Game_Input somehow
 			}
 		}
 
@@ -297,4 +292,20 @@ Game_Controller_Input :: struct {
 MAX_CONTROLLERS :: 4
 Game_Input :: struct {
 	controllers : [MAX_CONTROLLERS] Game_Controller_Input,
+}
+
+Game_Memory :: struct {
+	is_initialized : bool,
+
+	permanent_storage : rawptr,
+	permanent_storage_size : u64,
+
+	transient_storage : rawptr,
+	transient_storage_size : u64,
+}
+
+Game_State :: struct {
+	tone_hz : i16,
+	offset_x : i32,
+	offset_y : i32,
 }
