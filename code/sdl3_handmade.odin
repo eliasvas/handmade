@@ -241,8 +241,10 @@ main :: proc() {
 			kevent : SDL.KeyboardEvent = event.key
 			is_down := kevent.down
 			if kevent.key == SDL.K_ESCAPE {
-				return SDL.AppResult.SUCCESS;
-            }
+				return SDL.AppResult.SUCCESS
+            } else if kevent.key == SDL.K_SPACE {
+				return SDL.AppResult.SUCCESS
+			}
 			if is_down {
 				// TODO: pass to Game_Input somehow
 			}
