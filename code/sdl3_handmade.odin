@@ -20,7 +20,7 @@ SDL_Handmade_State :: struct {
 
 	audio_out : SDL_Audio_Output_Buffer,
 
-	old_input : Game_Input,
+	input : [Game_Input_Index]Game_Input,
 
 	game_memory : Game_Memory,
 
@@ -80,6 +80,17 @@ SDL_display_buffer_to_window :: proc(window : ^SDL.Window, buffer : ^SDL_Offscre
 			len(state.backbuffer.bitmap_memory)
 		)
 	}
+}
+
+SDL_process_keyboard_msg :: proc(new_state : ^Game_Button_State, is_down : bool) {
+	// FIXME: why does this assert trigger? maybe because processing happens in eventrather than iter?
+	//assert(new_state.ended_down != is_down)
+	new_state.ended_down = is_down
+	new_state.half_transition_count+=1
+}
+SDL_process_gamepad_msg :: proc(old_state : ^Game_Button_State, new_state : ^Game_Button_State, is_down : bool) {
+	new_state.ended_down = is_down
+	new_state.half_transition_count = new_state.ended_down != old_state.ended_down ? 1 : 0
 }
 
 main :: proc() {
@@ -147,41 +158,58 @@ main :: proc() {
 		// reset transient storage per-frame
 		state.game_memory.transient_storage_size = 0
 
-		ginput : Game_Input
-		old_input : ^Game_Input = &state.old_input
+		// Do Input stuff
+		new_input := &state.input[.NEW]
+		old_input := &state.input[.OLD]
 
-		// Do gamepad stuff
-		//SDL.UpdateGamepads()
+		// migrate the previous key states for keyboard
+		KEYBOARD_CIDX :: 0
+		mem.zero_item(&new_input.controllers[KEYBOARD_CIDX])
+		for button, bidx in old_input.controllers[KEYBOARD_CIDX].buttons {
+			new_input.controllers[KEYBOARD_CIDX].buttons[auto_cast bidx].ended_down = button.ended_down
+		}
+
 		gamepad_count : i32
 		gamepads : [^]SDL.JoystickID = SDL.GetGamepads(&gamepad_count);
 		for gamepad_idx in 0..<gamepad_count {
-			fmt.println("gamepad: ", gamepad_idx)
+			cidx := gamepad_idx + 1 // because cidx=0 is our keyboard for now
 			gamepad :^SDL.Gamepad = SDL.OpenGamepad(gamepads[gamepad_idx]);
 
-			left_x := SDL.GetGamepadAxis(gamepad, .LEFTX);
-			right_x := SDL.GetGamepadAxis(gamepad, .RIGHTX);
-			left_y := SDL.GetGamepadAxis(gamepad, .LEFTY);
-			right_y := SDL.GetGamepadAxis(gamepad, .RIGHTY);
+			left_x := f32(SDL.GetGamepadAxis(gamepad, .LEFTX))/f32(max(i16));
+			right_x := f32(SDL.GetGamepadAxis(gamepad, .RIGHTX))/f32(max(i16));
+			avg_x := left_x + right_x
+			new_input.controllers[cidx].stick_x = avg_x
 
-			dpad_up    := SDL.GetGamepadButton(gamepad, .DPAD_UP);
-			dpad_down  := SDL.GetGamepadButton(gamepad, .DPAD_DOWN);
-			dpad_right := SDL.GetGamepadButton(gamepad, .DPAD_RIGHT);
-			dpad_left  := SDL.GetGamepadButton(gamepad, .DPAD_LEFT);
 
-			ginput.controllers[0].dpad_up = Game_Button_State{1, dpad_up}
-			ginput.controllers[0].dpad_down = Game_Button_State{1, dpad_down}
-			ginput.controllers[0].dpad_right = Game_Button_State{1, dpad_right}
-			ginput.controllers[0].dpad_left = Game_Button_State{1, dpad_left}
+			right_y := f32(SDL.GetGamepadAxis(gamepad, .RIGHTY))/f32(max(i16))
+			left_y := f32(SDL.GetGamepadAxis(gamepad, .LEFTY))/f32(max(i16))
+			avg_y := left_y + right_y
+			new_input.controllers[cidx].stick_y = avg_y
 
-			button_up := SDL.GetGamepadButton(gamepad, .NORTH);
-			button_down := SDL.GetGamepadButton(gamepad, .SOUTH);
-			button_left := SDL.GetGamepadButton(gamepad, .WEST);
-			button_right := SDL.GetGamepadButton(gamepad, .EAST);
+			l_shoulder := SDL.GetGamepadButton(gamepad, .LEFT_SHOULDER)
+			r_shoulder := SDL.GetGamepadButton(gamepad, .RIGHT_SHOULDER)
+			SDL_process_gamepad_msg(&old_input.controllers[cidx].buttons[.L_SHOULDER], &new_input.controllers[cidx].buttons[.L_SHOULDER], l_shoulder)
+			SDL_process_gamepad_msg(&old_input.controllers[cidx].buttons[.R_SHOULDER], &new_input.controllers[cidx].buttons[.R_SHOULDER], r_shoulder)
 
-			ginput.controllers[0].button_up = Game_Button_State{1, button_up}
-			ginput.controllers[0].button_down = Game_Button_State{1, button_down}
-			ginput.controllers[0].button_left = Game_Button_State{1, button_left}
-			ginput.controllers[0].button_right = Game_Button_State{1, button_right}
+			dpad_up    := SDL.GetGamepadButton(gamepad, .DPAD_UP)
+			dpad_down  := SDL.GetGamepadButton(gamepad, .DPAD_DOWN)
+			dpad_right := SDL.GetGamepadButton(gamepad, .DPAD_RIGHT)
+			dpad_left  := SDL.GetGamepadButton(gamepad, .DPAD_LEFT)
+
+			SDL_process_gamepad_msg(&old_input.controllers[cidx].buttons[.MOVE_UP], &new_input.controllers[cidx].buttons[.MOVE_UP], dpad_up)
+			SDL_process_gamepad_msg(&old_input.controllers[cidx].buttons[.MOVE_DOWN], &new_input.controllers[cidx].buttons[.MOVE_DOWN], dpad_down)
+			SDL_process_gamepad_msg(&old_input.controllers[cidx].buttons[.MOVE_RIGHT], &new_input.controllers[cidx].buttons[.MOVE_RIGHT], dpad_right)
+			SDL_process_gamepad_msg(&old_input.controllers[cidx].buttons[.MOVE_LEFT], &new_input.controllers[cidx].buttons[.MOVE_LEFT], dpad_left)
+
+			action_up := SDL.GetGamepadButton(gamepad, .NORTH)
+			action_down := SDL.GetGamepadButton(gamepad, .SOUTH)
+			action_left := SDL.GetGamepadButton(gamepad, .WEST)
+			action_right := SDL.GetGamepadButton(gamepad, .EAST)
+
+			SDL_process_gamepad_msg(&old_input.controllers[cidx].buttons[.ACTION_UP], &new_input.controllers[cidx].buttons[.ACTION_UP], action_up)
+			SDL_process_gamepad_msg(&old_input.controllers[cidx].buttons[.ACTION_DOWN], &new_input.controllers[cidx].buttons[.ACTION_DOWN], action_down)
+			SDL_process_gamepad_msg(&old_input.controllers[cidx].buttons[.ACTION_RIGHT], &new_input.controllers[cidx].buttons[.ACTION_RIGHT], action_right)
+			SDL_process_gamepad_msg(&old_input.controllers[cidx].buttons[.ACTION_LEFT], &new_input.controllers[cidx].buttons[.ACTION_LEFT], action_left)
 		}
 
 		// Feed our audio stream if need be
@@ -202,7 +230,7 @@ main :: proc() {
 		}
 
 		// call update_and_render from platform agnostic code!
-		game_update_and_render(&state.game_memory, &ginput, &state.backbuffer, &game_audio_out)
+		game_update_and_render(&state.game_memory, new_input, &state.backbuffer, &game_audio_out)
 		SDL_display_buffer_to_window(state.window, &state.backbuffer)
 		SDL.RenderPresent(state.renderer)
 		state.audio_out.current_sine_sample = game_audio_out.current_sine_sample
@@ -223,12 +251,16 @@ main :: proc() {
 		fmt.printf("ms: %.2f - fps: %.2f\n", ms_per_frame, fps)
 
 		// Copy back our processed input to old input for next frame processing
-		state.old_input = ginput
+		temp := state.input[.OLD]
+		state.input[.OLD] = state.input[.NEW]
+		state.input[.NEW] = temp
 
 		return SDL.AppResult.CONTINUE;
 	}
 	events := proc "c" (appstate: rawptr, event: ^SDL.Event) -> SDL.AppResult {
 		context = runtime.default_context()
+
+		new_input := &state.input[.NEW]
 
 		if event.type == SDL.EventType.QUIT {
 			return SDL.AppResult.SUCCESS;
@@ -245,9 +277,12 @@ main :: proc() {
             } else if kevent.key == SDL.K_SPACE {
 				return SDL.AppResult.SUCCESS
 			}
-			if is_down {
-				// TODO: pass to Game_Input somehow
-			}
+			else if kevent.key == SDL.K_W { SDL_process_keyboard_msg(&new_input.controllers[0].buttons[.MOVE_UP], is_down) }
+			else if kevent.key == SDL.K_S { SDL_process_keyboard_msg(&new_input.controllers[0].buttons[.MOVE_DOWN], is_down) }
+			else if kevent.key == SDL.K_A { SDL_process_keyboard_msg(&new_input.controllers[0].buttons[.MOVE_LEFT], is_down) }
+			else if kevent.key == SDL.K_D { SDL_process_keyboard_msg(&new_input.controllers[0].buttons[.MOVE_RIGHT], is_down) }
+			else if kevent.key == SDL.K_Q { SDL_process_keyboard_msg(&new_input.controllers[0].buttons[.L_SHOULDER], is_down) }
+			else if kevent.key == SDL.K_E { SDL_process_keyboard_msg(&new_input.controllers[0].buttons[.R_SHOULDER], is_down) }
 		}
 
 		return SDL.AppResult.CONTINUE;
@@ -291,22 +326,32 @@ Game_Button_State :: struct {
 	half_transition_count : u32,
 	ended_down : bool,
 }
+Game_Button_Kind :: enum {
+	ACTION_UP,
+	ACTION_DOWN,
+	ACTION_LEFT,
+	ACTION_RIGHT,
 
-Game_Controller_Input :: struct {
-	button_up : Game_Button_State,
-	button_down : Game_Button_State,
-	button_left : Game_Button_State,
-	button_right : Game_Button_State,
+	MOVE_UP,
+	MOVE_DOWN,
+	MOVE_LEFT,
+	MOVE_RIGHT,
 
-	dpad_up : Game_Button_State,
-	dpad_down : Game_Button_State,
-	dpad_left : Game_Button_State,
-	dpad_right : Game_Button_State,
+	L_SHOULDER,
+	R_SHOULDER,
 }
 
-MAX_CONTROLLERS :: 4
+Game_Controller_Input :: struct {
+	stick_x : f32,
+	stick_y : f32,
+
+	buttons : [Game_Button_Kind]Game_Button_State,
+}
+
+// 0 -> Keyboard & 1..4 -> Gamepads
+Game_Input_Index :: enum { OLD, NEW }
 Game_Input :: struct {
-	controllers : [MAX_CONTROLLERS] Game_Controller_Input,
+	controllers : [5] Game_Controller_Input,
 }
 
 Game_Memory :: struct {
