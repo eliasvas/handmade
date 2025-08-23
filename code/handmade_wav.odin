@@ -11,7 +11,7 @@ import "core:c/libc"
 import "core:strings"
 
 /*
-   This is not from handmade hero, 
+   This is not from handmade hero,
    Its based on: https://blog.demofox.org/diy-synthesizer/
    in order to familiarize myself with audio programming.
 
@@ -80,7 +80,7 @@ wav_write :: proc(num_channels : u16, sample_rate : u16, raw_data : []$T, dest_p
   wfh.bits_per_sample = size_of(raw_data[0]) * 8
   wfh.byte_rate = u32(wfh.sample_rate * wfh.num_channels * wfh.bits_per_sample/8)
   wfh.block_align = u16(wfh.num_channels * wfh.bits_per_sample/8)
- 
+
   // data subchunk
   data := "data"
   intrinsics.mem_copy(&wfh.subchunk2_id[0], &(transmute([]u8)data)[0], 4)

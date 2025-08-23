@@ -259,8 +259,21 @@ main :: proc() {
 	SDL.EnterAppMainCallbacks(0, nil, init, iter, events, quit)
 }
 
+platform_read_entire_file :: proc(filename : cstring) -> []u8 {
+	size : uint
+	ptr :[^]u8= auto_cast SDL.LoadFile(filename, &size);
+	return ptr[:size]
+}
+
+platform_write_entire_file :: proc(filename : cstring, data : []u8) -> (ok : bool) {
+	if SDL.SaveFile(filename, &data[0], len(data)) {
+		ok = true
+	}
+	return ok
+}
 
 // The abstraction
+
 Game_Offscreen_Buffer :: SDL_Offscreen_Buffer
 Game_Audio_Output_Buffer :: struct {
 	current_sine_sample : int, // remove dis

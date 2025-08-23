@@ -38,6 +38,10 @@ game_update_and_render :: proc(memory : ^Game_Memory, input : ^Game_Input, buffe
 		game_state.tone_hz = 440
 
 		memory.is_initialized = true
+
+		data := platform_read_entire_file("sdl3_handmade.exe")
+		assert(len(data) > 0)
+		platform_write_entire_file("sdl3_handmade_copy.exe", data)
 	}
 	game_state.offset_x += 1
 
