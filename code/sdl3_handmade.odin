@@ -25,6 +25,8 @@ SDL_Handmade_State :: struct {
 	game_memory : Game_Memory,
 
 	backbuffer : SDL_Offscreen_Buffer,
+
+	frame_start : u64,
 }
 state : SDL_Handmade_State
 
@@ -147,13 +149,13 @@ main :: proc() {
 		// Test out our wav functionality
 		//wav_test()
 
+		state.frame_start = SDL.GetPerformanceCounter()
 		return SDL.AppResult.CONTINUE
 	}
 
 	iter := proc "c" (appstate: rawptr) -> SDL.AppResult  {
 		context = runtime.default_context()
-
-		frame_start := SDL.GetPerformanceCounter()
+		frame_start := state.frame_start
 
 		// reset transient storage per-frame
 		state.game_memory.transient_storage_size = 0
@@ -242,13 +244,28 @@ main :: proc() {
 		}
 
 
-		// Helper to print timing stuff
+		// Timing
 		frame_end := SDL.GetPerformanceCounter()
 		count := frame_end - frame_start
 		freq := SDL.GetPerformanceFrequency()
-		ms_per_frame := 1000.0 * (f64(count) / f64(freq))
-		fps:= (f64(freq) / f64(count))
-		fmt.printf("ms: %.2f - fps: %.2f\n", ms_per_frame, fps)
+
+		seconds_elapsed_for_frame := (f64(count) / f64(freq))
+
+		target_fps := 60.0
+		target_seconds_per_frame := 1.0 / target_fps
+
+		if seconds_elapsed_for_frame < target_seconds_per_frame {
+			sleep_sec := target_seconds_per_frame - seconds_elapsed_for_frame
+			SDL.DelayPrecise(u64(sleep_sec * 1024 * 1024 * 1024)); // sec -> nsec
+			frame_end = SDL.GetPerformanceCounter()
+			count = frame_end - frame_start
+			seconds_elapsed_for_frame = (f64(count) / f64(freq))
+		}
+		// reset frame_start for next frame
+		state.frame_start = frame_end
+
+		fps := (f64(freq) / f64(count))
+		fmt.printf("ms: %.2f - fps: %.2f\n", 1000*seconds_elapsed_for_frame, fps)
 
 		// Copy back our processed input to old input for next frame processing
 		temp := state.input[.OLD]
