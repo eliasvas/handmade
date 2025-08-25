@@ -233,6 +233,10 @@ main :: proc() {
 
 		// call update_and_render from platform agnostic code!
 		game_update_and_render(&state.game_memory, new_input, &state.backbuffer, &game_audio_out)
+
+		// test
+		sdl_visualize_last_audio_samples(&state.backbuffer,200)
+
 		SDL_display_buffer_to_window(state.window, &state.backbuffer)
 		SDL.RenderPresent(state.renderer)
 		state.audio_out.current_sine_sample = game_audio_out.current_sine_sample
@@ -256,7 +260,7 @@ main :: proc() {
 
 		if seconds_elapsed_for_frame < target_seconds_per_frame {
 			sleep_sec := target_seconds_per_frame - seconds_elapsed_for_frame
-			SDL.DelayPrecise(u64(sleep_sec * 1024 * 1024 * 1024)); // sec -> nsec
+			SDL.DelayPrecise(u64(sleep_sec * 1000 * 1000 * 1000)); // sec -> nsec
 			frame_end = SDL.GetPerformanceCounter()
 			count = frame_end - frame_start
 			seconds_elapsed_for_frame = (f64(count) / f64(freq))
@@ -385,4 +389,42 @@ Game_State :: struct {
 	tone_hz : i16,
 	offset_x : i32,
 	offset_y : i32,
+}
+
+render_vertical_line_from_0 :: proc(backbuffer : ^Game_Offscreen_Buffer, target_y : i32, offset_x : i32, line_width : i32, color : u32) {
+	if target_y > 0 {
+		for y in 0..<target_y {
+			y_coord := i32(backbuffer.dim[1]/2) - y
+			for x in 0..<line_width {
+				x_coord := offset_x + x
+				pitch_in_u32 := backbuffer.dim[0]
+				backbuffer.bitmap_memory[u32(y_coord) * pitch_in_u32 + u32(x_coord)] = color;
+			}
+		}
+	} else {
+		for y in target_y..<0 {
+			y_coord := i32(backbuffer.dim[1]/2) - y
+			for x in 0..<line_width {
+				x_coord := offset_x + x
+				pitch_in_u32 := backbuffer.dim[0]
+				backbuffer.bitmap_memory[u32(y_coord) * pitch_in_u32 + u32(x_coord)] = color;
+			}
+		}
+	}
+}
+
+sdl_visualize_last_audio_samples :: proc(backbuffer : ^Game_Offscreen_Buffer, sample_count : u32) {
+	window_w := backbuffer.dim[0]
+	width_per_line := i32(window_w) / i32(sample_count)
+	assert(width_per_line > 0)
+	data : [400]i16
+	SDL.GetAudioStreamData(state.audio_out.stream, auto_cast &data[0], state.audio_out.channel_num * 2 * size_of(i16)*i32(sample_count));
+	fmt.println("data: ", data)
+	for sample_idx in 0..<sample_count {
+		offset_x := width_per_line * i32(sample_idx)
+		target_y := i32(10) * i32(sample_idx+1)
+		//test_val := 10*f32(data[sample_idx*2]) / g_volume
+		test_val := 50*(f32(data[sample_idx*2]) / f32(state.audio_out.sample_rate))
+		render_vertical_line_from_0(backbuffer, i32(test_val), offset_x, width_per_line, 0xffffffff)
+	}
 }

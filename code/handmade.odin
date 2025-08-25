@@ -21,12 +21,12 @@ render_weird_gradient :: proc(backbuffer : ^Game_Offscreen_Buffer, offset_x : i3
 }
 
 // TODO: should probably add codepaths for MONO/STEREO
+g_volume :: f32(0.005)
 update_audio :: proc(audio_out : ^Game_Audio_Output_Buffer, tone_hz : i16, offset_x : i32, offset_y : i32) {
-	volume := f32(0.005)
 	for &sample, idx in audio_out.samples_to_write{
 		freq := i32(tone_hz) + offset_x + offset_y
 		phase := f32(audio_out.current_sine_sample*int(freq)) / f32(audio_out.sample_rate)
-		sample = math.sin_f32(phase*2*math.PI) * volume
+		sample = math.sin_f32(phase*2*math.PI) * g_volume
 		audio_out.current_sine_sample+=1
 	}
 }
@@ -43,7 +43,7 @@ game_update_and_render :: proc(memory : ^Game_Memory, input : ^Game_Input, buffe
 		assert(len(data) > 0)
 		platform_write_entire_file("sdl3_handmade_copy.exe", data)
 	}
-	game_state.offset_x += 1
+	//game_state.offset_x += 1
 
 	update_audio(audio_out, game_state.tone_hz, game_state.offset_x, game_state.offset_y)
 	render_weird_gradient(buffer, game_state.offset_x, game_state.offset_y)
