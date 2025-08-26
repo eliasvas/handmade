@@ -21,6 +21,7 @@ SDL_Handmade_State :: struct {
 	audio_out : SDL_Audio_Output_Buffer,
 
 	input : [Game_Input_Index]Game_Input,
+	sdl_pending_key_events : [dynamic]SDL.Event,
 
 	game_memory : Game_Memory,
 
@@ -87,6 +88,7 @@ SDL_display_buffer_to_window :: proc(window : ^SDL.Window, buffer : ^SDL_Offscre
 SDL_process_keyboard_msg :: proc(new_state : ^Game_Button_State, is_down : bool) {
 	// FIXME: why does this assert trigger? maybe because processing happens in eventrather than iter?
 	//assert(new_state.ended_down != is_down)
+	//new_state.ended_down = is_down
 	new_state.ended_down = is_down
 	new_state.half_transition_count+=1
 }
@@ -105,7 +107,7 @@ main :: proc() {
 			return SDL.AppResult.FAILURE;
 		}
 		// Create a window
-		state.window = SDL.CreateWindow("Handmade Hero", 640, 480, flags = {.RESIZABLE})
+		state.window = SDL.CreateWindow("Handmade Hero", 768, 512, flags = {.RESIZABLE})
 		if state.window == nil {
 			SDL.Log("Window creation Failed!")
 			return SDL.AppResult.FAILURE
@@ -171,6 +173,9 @@ main :: proc() {
 			new_input.controllers[KEYBOARD_CIDX].buttons[auto_cast bidx].ended_down = button.ended_down
 		}
 
+		//assert(!new_input.controllers[0].buttons[.MOVE_UP].ended_down)
+
+		// Update all controllers based on SDL gamepads
 		gamepad_count : i32
 		gamepads : [^]SDL.JoystickID = SDL.GetGamepads(&gamepad_count);
 		for gamepad_idx in 0..<gamepad_count {
@@ -214,6 +219,24 @@ main :: proc() {
 			SDL_process_gamepad_msg(&old_input.controllers[cidx].buttons[.ACTION_LEFT], &new_input.controllers[cidx].buttons[.ACTION_LEFT], action_left)
 		}
 
+		// Update based on key events
+		for event in state.sdl_pending_key_events {
+			kevent : SDL.KeyboardEvent = event.key
+			is_down := kevent.down
+			if kevent.key == SDL.K_ESCAPE {
+				return SDL.AppResult.SUCCESS
+            } else if kevent.key == SDL.K_SPACE {
+				return SDL.AppResult.SUCCESS
+			}
+			else if kevent.key == SDL.K_W { SDL_process_keyboard_msg(&new_input.controllers[0].buttons[.MOVE_UP], is_down) }
+			else if kevent.key == SDL.K_S { SDL_process_keyboard_msg(&new_input.controllers[0].buttons[.MOVE_DOWN], is_down) }
+			else if kevent.key == SDL.K_A { SDL_process_keyboard_msg(&new_input.controllers[0].buttons[.MOVE_LEFT], is_down) }
+			else if kevent.key == SDL.K_D { SDL_process_keyboard_msg(&new_input.controllers[0].buttons[.MOVE_RIGHT], is_down) }
+			else if kevent.key == SDL.K_Q { SDL_process_keyboard_msg(&new_input.controllers[0].buttons[.L_SHOULDER], is_down) }
+			else if kevent.key == SDL.K_E { SDL_process_keyboard_msg(&new_input.controllers[0].buttons[.R_SHOULDER], is_down) }
+		}
+		clear(&state.sdl_pending_key_events)
+
 		// Feed our audio stream if need be
 		game_audio_out := Game_Audio_Output_Buffer{
 			sample_rate = state.audio_out.sample_rate,
@@ -228,6 +251,7 @@ main :: proc() {
 		// TODO: latency is too big, also we MUST make sure the samples game writes are enough
 		queued_samples_count := SDL.GetAudioStreamQueued(state.audio_out.stream)
 		if queued_samples_count < i32(minimum_audio) {
+			// TODO: Also this should be a temp alloc
 			game_audio_out.samples_to_write = make([]f32, 512)
 		}
 
@@ -235,9 +259,12 @@ main :: proc() {
 		game_update_and_render(&state.game_memory, new_input, &state.backbuffer, &game_audio_out)
 
 		// test
-		sdl_visualize_last_audio_samples(&state.backbuffer,200)
+		if new_input.controllers[0].buttons[.MOVE_UP].ended_down {
+			sdl_visualize_last_audio_samples(&state.backbuffer,400)
+		}
 
 		SDL_display_buffer_to_window(state.window, &state.backbuffer)
+
 		SDL.RenderPresent(state.renderer)
 		state.audio_out.current_sine_sample = game_audio_out.current_sine_sample
 
@@ -291,19 +318,8 @@ main :: proc() {
 			SDL.GetWindowSize(state.window, &w, &h)
 			SDL_resize_offscreen_buffer(&state.backbuffer, {u32(w), u32(h)})
 		} else if event.type == SDL.EventType.KEY_DOWN || event.type == SDL.EventType.KEY_UP {
-			kevent : SDL.KeyboardEvent = event.key
-			is_down := kevent.down
-			if kevent.key == SDL.K_ESCAPE {
-				return SDL.AppResult.SUCCESS
-            } else if kevent.key == SDL.K_SPACE {
-				return SDL.AppResult.SUCCESS
-			}
-			else if kevent.key == SDL.K_W { SDL_process_keyboard_msg(&new_input.controllers[0].buttons[.MOVE_UP], is_down) }
-			else if kevent.key == SDL.K_S { SDL_process_keyboard_msg(&new_input.controllers[0].buttons[.MOVE_DOWN], is_down) }
-			else if kevent.key == SDL.K_A { SDL_process_keyboard_msg(&new_input.controllers[0].buttons[.MOVE_LEFT], is_down) }
-			else if kevent.key == SDL.K_D { SDL_process_keyboard_msg(&new_input.controllers[0].buttons[.MOVE_RIGHT], is_down) }
-			else if kevent.key == SDL.K_Q { SDL_process_keyboard_msg(&new_input.controllers[0].buttons[.L_SHOULDER], is_down) }
-			else if kevent.key == SDL.K_E { SDL_process_keyboard_msg(&new_input.controllers[0].buttons[.R_SHOULDER], is_down) }
+			// pass the key event to our internal structure, to update in next _Iterate
+			append(&state.sdl_pending_key_events, event^)
 		}
 
 		return SDL.AppResult.CONTINUE;
@@ -415,16 +431,19 @@ render_vertical_line_from_0 :: proc(backbuffer : ^Game_Offscreen_Buffer, target_
 
 sdl_visualize_last_audio_samples :: proc(backbuffer : ^Game_Offscreen_Buffer, sample_count : u32) {
 	window_w := backbuffer.dim[0]
-	width_per_line := i32(window_w) / i32(sample_count)
+	width_per_line := f32(window_w)/ f32(sample_count)
 	assert(width_per_line > 0)
-	data : [400]i16
-	SDL.GetAudioStreamData(state.audio_out.stream, auto_cast &data[0], state.audio_out.channel_num * 2 * size_of(i16)*i32(sample_count));
-	fmt.println("data: ", data)
+
+	total_samples := state.audio_out.channel_num * i32(sample_count)
+	// TODO: this should become a temp allocation!
+	data := make([]f32, total_samples)
+	defer delete(data)
+
+	SDL.GetAudioStreamData(state.audio_out.stream, auto_cast &data[0], total_samples * size_of(f32))
 	for sample_idx in 0..<sample_count {
-		offset_x := width_per_line * i32(sample_idx)
-		target_y := i32(10) * i32(sample_idx+1)
-		//test_val := 10*f32(data[sample_idx*2]) / g_volume
-		test_val := 50*(f32(data[sample_idx*2]) / f32(state.audio_out.sample_rate))
-		render_vertical_line_from_0(backbuffer, i32(test_val), offset_x, width_per_line, 0xffffffff)
+		offset_x := width_per_line * f32(sample_idx)
+		// FIXME: We just output the Left or MONO channel for now
+		target_y := data[sample_idx * u32(state.audio_out.channel_num)] * f32(backbuffer.dim[1])/2
+		render_vertical_line_from_0(backbuffer, i32(target_y), i32(offset_x), i32(width_per_line), 0xffffffff)
 	}
 }
