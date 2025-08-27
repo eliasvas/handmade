@@ -1,4 +1,4 @@
-package handmade
+package game
 
 import "base:runtime"
 import "core:fmt"
@@ -33,6 +33,8 @@ update_audio :: proc(audio_out : ^Game_Audio_Output_Buffer, tone_hz : i16, offse
 		frame_idx += int(audio_out.channel_num)
 	}
 }
+
+@(export)
 game_update_and_render :: proc(memory : ^Game_Memory, input : ^Game_Input, buffer : ^Game_Offscreen_Buffer, audio_out : ^Game_Audio_Output_Buffer) {
 	// NOTE(inv): For now permanent_storage holds just the game state..
 	game_state : ^Game_State = auto_cast memory.permanent_storage
@@ -41,9 +43,11 @@ game_update_and_render :: proc(memory : ^Game_Memory, input : ^Game_Input, buffe
 
 		memory.is_initialized = true
 
+		/*
 		data := platform_read_entire_file("sdl3_handmade.exe")
 		assert(len(data) > 0)
 		platform_write_entire_file("sdl3_handmade_copy.exe", data)
+		*/
 	}
 	//game_state.offset_x += 1
 

@@ -1,4 +1,4 @@
-package handmade
+package game
 
 import "base:runtime"
 import "base:intrinsics"

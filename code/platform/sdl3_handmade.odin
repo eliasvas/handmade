@@ -1,5 +1,8 @@
-package handmade
+package platform
 
+import "core:dynlib"
+import "core:os"
+import "core:c/libc"
 import "base:runtime"
 import "core:fmt"
 import "core:mem"
@@ -25,23 +28,13 @@ SDL_Handmade_State :: struct {
 
 	game_memory : Game_Memory,
 
-	backbuffer : SDL_Offscreen_Buffer,
+	backbuffer : Game_Offscreen_Buffer,
 
 	frame_start : u64,
+
+	game_api : Game_API,
 }
 state : SDL_Handmade_State
-
-Pixel_Format_Info :: struct{
-	r_shift : u8,
-	g_shift : u8,
-	b_shift : u8,
-}
-SDL_Offscreen_Buffer :: struct {
-	px_info : Pixel_Format_Info,
-	bitmap_memory : []u32,
-	dim : [2]u32,
-	bytes_per_pixel : u32,
-}
 
 SDL_Audio_Output_Buffer :: struct {
 	stream : ^SDL.AudioStream,
@@ -53,7 +46,7 @@ SDL_Audio_Output_Buffer :: struct {
 }
 
 // Will delete previous offscreen buffer and allocate a new one for us
-SDL_resize_offscreen_buffer :: proc(buffer : ^SDL_Offscreen_Buffer, new_dim : [2]u32) {
+SDL_resize_offscreen_buffer :: proc(buffer : ^Game_Offscreen_Buffer, new_dim : [2]u32) {
 	if len(buffer.bitmap_memory) > 0 {
 		delete(buffer.bitmap_memory)
 	}
@@ -74,7 +67,7 @@ SDL_resize_offscreen_buffer :: proc(buffer : ^SDL_Offscreen_Buffer, new_dim : [2
 }
 
 // Will write the contents of our offscreen buffer to the window's surface
-SDL_display_buffer_to_window :: proc(window : ^SDL.Window, buffer : ^SDL_Offscreen_Buffer) {
+SDL_display_buffer_to_window :: proc(window : ^SDL.Window, buffer : ^Game_Offscreen_Buffer) {
 	surface := SDL.GetWindowSurface(state.window);
 	if surface != nil{
 		intrinsics.mem_copy(
@@ -96,10 +89,47 @@ SDL_process_gamepad_msg :: proc(old_state : ^Game_Button_State, new_state : ^Gam
 	new_state.ended_down = is_down
 	new_state.half_transition_count = new_state.ended_down != old_state.ended_down ? 1 : 0
 }
+SDL_load_game_api :: proc() -> (Game_API, bool) {
+	dll_time, dll_time_err := os.last_write_time_by_name("game.dll")
+	if dll_time_err != os.ERROR_NONE {
+		fmt.println("Could not fetch last write date of game.dll")
+		return {}, false
+	}
+	dll_name := fmt.tprintf("game_copy.dll")
+	copy_cmd := fmt.ctprintf("copy game.dll {0}", dll_name)
+	if libc.system(copy_cmd) != 0 {
+		fmt.println("Failed to copy game.dll to {0}", dll_name)
+		return {}, false
+	}
+	lib, lib_ok := dynlib.load_library(dll_name)
+	if !lib_ok {
+		fmt.println("Failed loading game DLL")
+		return {}, false
+	}
+	api := Game_API {
+		game_update_and_render = cast(proc(memory : ^Game_Memory, input : ^Game_Input, buffer : ^Game_Offscreen_Buffer, audio_out : ^Game_Audio_Output_Buffer))(dynlib.symbol_address(lib, "game_update_and_render") or_else nil),
+	}
+	if api.game_update_and_render == nil {
+		dynlib.unload_library(api.lib)
+		fmt.println("Game DLL missing required procedure")
+		return {}, false
+	}
+
+	return api, true
+}
+SDL_unload_game_api :: proc(api : Game_API) {
+	if api.lib != nil {
+		dynlib.unload_library(api.lib)
+	}
+}
 
 main :: proc() {
 	init := proc "c" (appstate: ^rawptr, argc: c.int, argv: [^]cstring) -> SDL.AppResult {
 		context = runtime.default_context()
+
+		ok : bool
+		state.game_api,ok = SDL_load_game_api()
+		assert(ok)
 
 		// Initialize all SDL subsystems
 		if !SDL.Init(SDL.INIT_VIDEO | SDL.INIT_GAMEPAD | SDL.INIT_AUDIO) {
@@ -220,6 +250,7 @@ main :: proc() {
 		}
 
 		// Update based on key events
+		// Right now we are hijacking the events from event callback
 		for event in state.sdl_pending_key_events {
 			kevent : SDL.KeyboardEvent = event.key
 			is_down := kevent.down
@@ -256,7 +287,7 @@ main :: proc() {
 		}
 
 		// call update_and_render from platform agnostic code!
-		game_update_and_render(&state.game_memory, new_input, &state.backbuffer, &game_audio_out)
+		state.game_api.game_update_and_render(&state.game_memory, new_input, &state.backbuffer, &game_audio_out)
 
 		// test
 		if new_input.controllers[0].buttons[.MOVE_UP].ended_down {
@@ -344,67 +375,6 @@ platform_write_entire_file :: proc(filename : cstring, data : []u8) -> (ok : boo
 		ok = true
 	}
 	return ok
-}
-
-// The abstraction
-
-Game_Offscreen_Buffer :: SDL_Offscreen_Buffer
-Game_Audio_Output_Buffer :: struct {
-	current_sine_sample : int, // remove dis
-	channel_num : i32,
-	sample_rate : i32,
-
-	// game should write all these samples
-	// they will be updated to underlying osund buffer
-	samples_to_write : []f32,
-}
-
-Game_Button_State :: struct {
-	half_transition_count : u32,
-	ended_down : bool,
-}
-Game_Button_Kind :: enum {
-	ACTION_UP,
-	ACTION_DOWN,
-	ACTION_LEFT,
-	ACTION_RIGHT,
-
-	MOVE_UP,
-	MOVE_DOWN,
-	MOVE_LEFT,
-	MOVE_RIGHT,
-
-	L_SHOULDER,
-	R_SHOULDER,
-}
-
-Game_Controller_Input :: struct {
-	stick_x : f32,
-	stick_y : f32,
-
-	buttons : [Game_Button_Kind]Game_Button_State,
-}
-
-// 0 -> Keyboard & 1..4 -> Gamepads
-Game_Input_Index :: enum { OLD, NEW }
-Game_Input :: struct {
-	controllers : [5] Game_Controller_Input,
-}
-
-Game_Memory :: struct {
-	is_initialized : bool,
-
-	permanent_storage : rawptr,
-	permanent_storage_size : u64,
-
-	transient_storage : rawptr,
-	transient_storage_size : u64,
-}
-
-Game_State :: struct {
-	tone_hz : i16,
-	offset_x : i32,
-	offset_y : i32,
 }
 
 render_vertical_line_from_0 :: proc(backbuffer : ^Game_Offscreen_Buffer, target_y : i32, offset_x : i32, line_width : i32, color : u32) {
