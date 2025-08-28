@@ -12,9 +12,8 @@ render_weird_gradient :: proc(backbuffer : ^Game_Offscreen_Buffer, offset_x : i3
 	for y in 0..<backbuffer.dim[1] {
 		for x in 0..<backbuffer.dim[0] {
 			pitch_in_u32 := backbuffer.dim[0]
-			color :=
-				(u32(i32(x)%255+offset_x)%255 << backbuffer.px_info.g_shift) |
-				(u32(i32(y)%255+offset_y)%255 << backbuffer.px_info.b_shift)
+			color := (u32(i32(x)%255+offset_x)%255 << backbuffer.px_info.g_shift) | (u32(i32(y)%255+offset_y)%255 << backbuffer.px_info.b_shift)
+			//color := (u32(i32(x)%255+offset_x)%255 << backbuffer.px_info.r_shift) | (u32(i32(y)%255+offset_y)%255 << backbuffer.px_info.b_shift)
 			backbuffer.bitmap_memory[u32(y) * pitch_in_u32 + u32(x)] = color;
 		}
 	}

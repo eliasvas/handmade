@@ -33,6 +33,7 @@ SDL_Handmade_State :: struct {
 	frame_start : u64,
 
 	game_api : Game_API,
+	game_api_version : u32,
 }
 state : SDL_Handmade_State
 
@@ -95,7 +96,7 @@ SDL_load_game_api :: proc() -> (Game_API, bool) {
 		fmt.println("Could not fetch last write date of game.dll")
 		return {}, false
 	}
-	dll_name := fmt.tprintf("game_copy.dll")
+	dll_name := fmt.tprintf("game_{0}.dll", state.game_api_version)
 	copy_cmd := fmt.ctprintf("copy game.dll {0}", dll_name)
 	if libc.system(copy_cmd) != 0 {
 		fmt.println("Failed to copy game.dll to {0}", dll_name)
@@ -108,13 +109,14 @@ SDL_load_game_api :: proc() -> (Game_API, bool) {
 	}
 	api := Game_API {
 		game_update_and_render = cast(proc(memory : ^Game_Memory, input : ^Game_Input, buffer : ^Game_Offscreen_Buffer, audio_out : ^Game_Audio_Output_Buffer))(dynlib.symbol_address(lib, "game_update_and_render") or_else nil),
+		dll_time = dll_time,
+		lib = lib,
 	}
 	if api.game_update_and_render == nil {
 		dynlib.unload_library(api.lib)
 		fmt.println("Game DLL missing required procedure")
 		return {}, false
 	}
-
 	return api, true
 }
 SDL_unload_game_api :: proc(api : Game_API) {
@@ -126,10 +128,6 @@ SDL_unload_game_api :: proc(api : Game_API) {
 main :: proc() {
 	init := proc "c" (appstate: ^rawptr, argc: c.int, argv: [^]cstring) -> SDL.AppResult {
 		context = runtime.default_context()
-
-		ok : bool
-		state.game_api,ok = SDL_load_game_api()
-		assert(ok)
 
 		// Initialize all SDL subsystems
 		if !SDL.Init(SDL.INIT_VIDEO | SDL.INIT_GAMEPAD | SDL.INIT_AUDIO) {
@@ -188,6 +186,18 @@ main :: proc() {
 	iter := proc "c" (appstate: rawptr) -> SDL.AppResult  {
 		context = runtime.default_context()
 		frame_start := state.frame_start
+
+		// automatic game.dll reloading when changed
+		dll_time, dll_time_err := os.last_write_time_by_name("game.dll")
+		reload := dll_time_err == os.ERROR_NONE && state.game_api.dll_time != dll_time
+		if reload {
+			new_api,ok := SDL_load_game_api()
+			if ok {
+				state.game_api_version += 1
+				SDL_unload_game_api(state.game_api)
+				state.game_api = new_api
+			}
+		}
 
 		// reset transient storage per-frame
 		state.game_memory.transient_storage_size = 0
