@@ -18,6 +18,20 @@ render_weird_gradient :: proc(backbuffer : ^Game_Offscreen_Buffer, offset_x : i3
 		}
 	}
 }
+render_player :: proc(backbuffer : ^Game_Offscreen_Buffer, posx : int, posy : int) {
+	color := u32(0xFFFFFFFF);
+	dim := 10
+	for y in 0..<dim {
+		for x in 0..<dim {
+			pitch_in_u32 := backbuffer.dim[0]
+			// This idx calculation is wrong, it just doesn't let the program crash :|
+			idx := i32(y+posy) * i32(pitch_in_u32) + i32(x+posx)
+			if idx > 0 && idx < i32(backbuffer.dim[0] * backbuffer.dim[1]) {
+				backbuffer.bitmap_memory[u32(idx)] = color;
+			}
+		}
+	}
+}
 
 // TODO: should probably add codepaths for MONO/STEREO
 update_audio :: proc(audio_out : ^Game_Audio_Output_Buffer, tone_hz : i16, offset_x : i32, offset_y : i32) {
@@ -42,6 +56,9 @@ game_update_and_render :: proc(memory : ^Game_Memory, input : ^Game_Input, buffe
 
 		memory.is_initialized = true
 
+		game_state.player_x = 100
+		game_state.player_y = 100
+
 		/*
 		data := platform_read_entire_file("sdl3_handmade.exe")
 		assert(len(data) > 0)
@@ -50,6 +67,10 @@ game_update_and_render :: proc(memory : ^Game_Memory, input : ^Game_Input, buffe
 	}
 	//game_state.offset_x += 1
 
-	update_audio(audio_out, game_state.tone_hz, game_state.offset_x, game_state.offset_y)
+	when false {
+		update_audio(audio_out, game_state.tone_hz, game_state.offset_x, game_state.offset_y)
+	}
 	render_weird_gradient(buffer, game_state.offset_x, game_state.offset_y)
+	render_player(buffer, game_state.player_x, game_state.player_y)
+	game_state.player_x+=1
 }

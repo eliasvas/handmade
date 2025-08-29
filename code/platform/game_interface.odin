@@ -73,6 +73,9 @@ Game_State :: struct {
 	tone_hz : i16,
 	offset_x : i32,
 	offset_y : i32,
+
+	player_x : int,
+	player_y : int,
 }
 
 Game_API :: struct {

@@ -17,6 +17,7 @@ import SDL "vendor:sdl3"
 // TODO: for audio, maybe the callback is better approach https://github.com/libsdl-org/SDL/blob/main/examples/audio/02-simple-playback-callback/simple-playback-callback.c
 // TODO: also wavs https://github.com/libsdl-org/SDL/blob/main/examples/audio/03-load-wav/load-wav.c
 
+// Most of these SHOULDN'T BE GLOBALS OK!?!?!??!?!?!
 SDL_Handmade_State :: struct {
 	window : ^SDL.Window,
 	renderer : ^SDL.Renderer,
@@ -45,6 +46,19 @@ SDL_Audio_Output_Buffer :: struct {
 	sample_rate : i32, // e.g 8000Hz
 	format : SDL.AudioFormat, // maybe we should just support F32 or S16 by default..
 }
+
+// This shouldn't be global as well?
+SDL_State :: struct {
+	total_size : u64,
+	game_memory_block : rawptr,
+
+	recording_handle : ^SDL.IOStream,
+	input_recording_index : int,
+
+	playback_handle : ^SDL.IOStream,
+	input_playing_index : int,
+}
+sdl_state : SDL_State
 
 // Will delete previous offscreen buffer and allocate a new one for us
 SDL_resize_offscreen_buffer :: proc(buffer : ^Game_Offscreen_Buffer, new_dim : [2]u32) {
@@ -125,6 +139,43 @@ SDL_unload_game_api :: proc(api : Game_API) {
 	}
 }
 
+SDL_begin_recording_input :: proc(sdl_state : ^SDL_State, input_recording_index : int) {
+	sdl_state.input_recording_index = input_recording_index
+	filename : cstring = "foo.hmi"
+	sdl_state.recording_handle = SDL.IOFromFile(filename, "w")
+
+	// write ALL our game state - just like that!
+	SDL.WriteIO( sdl_state.recording_handle, sdl_state.game_memory_block, auto_cast sdl_state.total_size );
+}
+SDL_end_recording_input :: proc(sdl_state : ^SDL_State) {
+	SDL.CloseIO(sdl_state.recording_handle);
+	sdl_state.input_recording_index = 0
+}
+SDL_record_input :: proc(sdl_state : ^SDL_State, new_input : ^Game_Input) {
+	SDL.WriteIO( sdl_state.recording_handle, new_input, auto_cast size_of(new_input^));
+}
+
+SDL_begin_input_playback :: proc(sdl_state : ^SDL_State, input_playing_index : int) {
+	sdl_state.input_playing_index = input_playing_index
+	filename : cstring = "foo.hmi"
+	sdl_state.playback_handle = SDL.IOFromFile(filename, "r")
+	SDL.ReadIO( sdl_state.playback_handle, sdl_state.game_memory_block, auto_cast sdl_state.total_size);
+}
+SDL_end_input_playback :: proc(sdl_state : ^SDL_State) {
+	SDL.CloseIO(sdl_state.playback_handle);
+	sdl_state.input_playing_index = 0
+}
+SDL_playback_input :: proc(sdl_state : ^SDL_State, new_input : ^Game_Input) {
+	bytes_read := SDL.ReadIO( sdl_state.playback_handle, new_input, auto_cast size_of(new_input^));
+	if bytes_read == 0 {
+		// if no bytes were read, we go back to the beginning
+		playing_index := sdl_state.input_playing_index
+		SDL_end_input_playback(sdl_state)
+		SDL_begin_input_playback(sdl_state, playing_index)
+		bytes_read := SDL.ReadIO( sdl_state.playback_handle, new_input, auto_cast size_of(new_input^));
+	}
+}
+
 main :: proc() {
 	init := proc "c" (appstate: ^rawptr, argc: c.int, argv: [^]cstring) -> SDL.AppResult {
 		context = runtime.default_context()
@@ -173,8 +224,14 @@ main :: proc() {
 		SDL_resize_offscreen_buffer(&state.backbuffer, {u32(w), u32(h)})
 
 		// Initialize the Game's memory (we will pass it though to game layer)
-		state.game_memory.permanent_storage,_ = mem.alloc(mem.Megabyte*64)
-		state.game_memory.transient_storage,_ = mem.alloc(mem.Gigabyte*1)
+		state.game_memory.permanent_storage_size = mem.Megabyte*64
+		state.game_memory.permanent_storage,_ = mem.alloc(auto_cast state.game_memory.permanent_storage_size)
+
+		state.game_memory.transient_storage_size = mem.Gigabyte*1
+		state.game_memory.transient_storage,_ = mem.alloc(auto_cast state.game_memory.transient_storage_size)
+
+		sdl_state.total_size = state.game_memory.permanent_storage_size
+		sdl_state.game_memory_block = state.game_memory.permanent_storage
 
 		// Test out our wav functionality
 		//wav_test()
@@ -275,6 +332,17 @@ main :: proc() {
 			else if kevent.key == SDL.K_D { SDL_process_keyboard_msg(&new_input.controllers[0].buttons[.MOVE_RIGHT], is_down) }
 			else if kevent.key == SDL.K_Q { SDL_process_keyboard_msg(&new_input.controllers[0].buttons[.L_SHOULDER], is_down) }
 			else if kevent.key == SDL.K_E { SDL_process_keyboard_msg(&new_input.controllers[0].buttons[.R_SHOULDER], is_down) }
+			else if kevent.key == SDL.K_L {
+				// Simple looping system!
+				if is_down {
+					if sdl_state.input_recording_index == 0 {
+						SDL_begin_recording_input(&sdl_state, 1)
+					} else {
+						SDL_end_recording_input(&sdl_state)
+						SDL_begin_input_playback(&sdl_state, 1)
+					}
+				}
+			}
 		}
 		clear(&state.sdl_pending_key_events)
 
@@ -294,6 +362,14 @@ main :: proc() {
 		if queued_samples_count < i32(minimum_audio) {
 			// TODO: Also this should be a temp alloc
 			game_audio_out.samples_to_write = make([]f32, 512)
+		}
+
+		// Do looping/playback stuff maybe
+		if sdl_state.input_recording_index > 0 {
+			SDL_record_input(&sdl_state, new_input)
+		}
+		if sdl_state.input_playing_index > 0 {
+			SDL_playback_input(&sdl_state, new_input)
 		}
 
 		// call update_and_render from platform agnostic code!
