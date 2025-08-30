@@ -14,29 +14,17 @@ import "core:c"
 
 import SDL "vendor:sdl3"
 
-// TODO: for audio, maybe the callback is better approach https://github.com/libsdl-org/SDL/blob/main/examples/audio/02-simple-playback-callback/simple-playback-callback.c
-// TODO: also wavs https://github.com/libsdl-org/SDL/blob/main/examples/audio/03-load-wav/load-wav.c
-
-// Most of these SHOULDN'T BE GLOBALS OK!?!?!??!?!?!
-SDL_Handmade_State :: struct {
-	window : ^SDL.Window,
-	renderer : ^SDL.Renderer,
-
-	audio_out : SDL_Audio_Output_Buffer,
-
-	input : [Game_Input_Index]Game_Input,
-	sdl_pending_key_events : [dynamic]SDL.Event,
-
-	game_memory : Game_Memory,
-
-	backbuffer : Game_Offscreen_Buffer,
-
-	frame_start : u64,
-
-	game_api : Game_API,
-	game_api_version : u32,
-}
-state : SDL_Handmade_State
+// These could be inside mainproc BUT to support wasm we do the event thing, so a no go..
+g_window : ^SDL.Window
+g_renderer : ^SDL.Renderer
+g_backbuffer : Game_Offscreen_Buffer
+g_input : [Game_Input_Index]Game_Input
+g_sdl_pending_key_events : [dynamic]SDL.Event // TODO: remove this, no dynamic allocations!
+g_audio_output : SDL_Audio_Output_Buffer
+g_frame_start : u64
+g_game_memory : Game_Memory
+g_game_api : Game_API
+g_game_api_version : u32
 
 SDL_Audio_Output_Buffer :: struct {
 	stream : ^SDL.AudioStream,
@@ -66,7 +54,7 @@ SDL_resize_offscreen_buffer :: proc(buffer : ^Game_Offscreen_Buffer, new_dim : [
 		delete(buffer.bitmap_memory)
 	}
 
-	surface := SDL.GetWindowSurface(state.window);
+	surface := SDL.GetWindowSurface(g_window);
 	if surface != nil {
 		pixel_format_details := SDL.GetPixelFormatDetails(surface.format)
 
@@ -83,12 +71,12 @@ SDL_resize_offscreen_buffer :: proc(buffer : ^Game_Offscreen_Buffer, new_dim : [
 
 // Will write the contents of our offscreen buffer to the window's surface
 SDL_display_buffer_to_window :: proc(window : ^SDL.Window, buffer : ^Game_Offscreen_Buffer) {
-	surface := SDL.GetWindowSurface(state.window);
+	surface := SDL.GetWindowSurface(g_window);
 	if surface != nil{
 		intrinsics.mem_copy(
 			surface.pixels,
-			&state.backbuffer.bitmap_memory[0],
-			len(state.backbuffer.bitmap_memory)
+			&g_backbuffer.bitmap_memory[0],
+			len(g_backbuffer.bitmap_memory)
 		)
 	}
 }
@@ -105,18 +93,20 @@ SDL_process_gamepad_msg :: proc(old_state : ^Game_Button_State, new_state : ^Gam
 	new_state.half_transition_count = new_state.ended_down != old_state.ended_down ? 1 : 0
 }
 SDL_load_game_api :: proc() -> (Game_API, bool) {
-	dll_time, dll_time_err := os.last_write_time_by_name("game.dll")
+	dll_fullpath := SDL_build_game_dll_fullpath("game.dll")
+	dll_time, dll_time_err := os.last_write_time_by_name(dll_fullpath)
 	if dll_time_err != os.ERROR_NONE {
 		fmt.println("Could not fetch last write date of game.dll")
 		return {}, false
 	}
-	dll_name := fmt.tprintf("game_{0}.dll", state.game_api_version)
-	copy_cmd := fmt.ctprintf("copy game.dll {0}", dll_name)
+	dll_copy_name := fmt.tprintf("game_{}.dll", g_game_api_version)
+	dll_copy_fullpath := SDL_build_game_dll_fullpath(dll_copy_name)
+	copy_cmd := fmt.ctprintf("copy {} {}", dll_fullpath, dll_copy_fullpath)
 	if libc.system(copy_cmd) != 0 {
-		fmt.println("Failed to copy game.dll to {0}", dll_name)
+		fmt.println("Failed to copy game.dll to {}", dll_copy_fullpath)
 		return {}, false
 	}
-	lib, lib_ok := dynlib.load_library(dll_name)
+	lib, lib_ok := dynlib.load_library(dll_copy_fullpath)
 	if !lib_ok {
 		fmt.println("Failed loading game DLL")
 		return {}, false
@@ -176,6 +166,9 @@ SDL_playback_input :: proc(sdl_state : ^SDL_State, new_input : ^Game_Input) {
 	}
 }
 
+SDL_get_basepath :: proc() -> string{ return string(SDL.GetBasePath()) }
+SDL_build_game_dll_fullpath :: proc(dll_name : string) -> string{ return fmt.tprintf("{}{}", SDL_get_basepath(), dll_name ) }
+
 main :: proc() {
 	init := proc "c" (appstate: ^rawptr, argc: c.int, argv: [^]cstring) -> SDL.AppResult {
 		context = runtime.default_context()
@@ -186,18 +179,18 @@ main :: proc() {
 			return SDL.AppResult.FAILURE;
 		}
 		// Create a window
-		state.window = SDL.CreateWindow("Handmade Hero", 768, 512, flags = {.RESIZABLE})
-		if state.window == nil {
+		g_window = SDL.CreateWindow("Handmade Hero", 768, 512, flags = {.RESIZABLE})
+		if g_window == nil {
 			SDL.Log("Window creation Failed!")
 			return SDL.AppResult.FAILURE
 		}
 		// Create a renderer
-		state.renderer = SDL.CreateRenderer(state.window, "software")
-		if state.renderer == nil {
+		g_renderer = SDL.CreateRenderer(g_window, "software")
+		if g_renderer == nil {
 			SDL.Log("Renderer creation Failed!")
 			return SDL.AppResult.FAILURE
 		}
-		SDL.SetRenderVSync(state.renderer, 1)
+		SDL.SetRenderVSync(g_renderer, 1)
 
 		audio_out := SDL_Audio_Output_Buffer{
 			channel_num = 1,
@@ -216,52 +209,54 @@ main :: proc() {
 		}
 		// OpenAudioDeviceStream starts at paused state, we need to start it manually..
 		SDL.ResumeAudioStreamDevice(audio_out.stream);
-		state.audio_out = audio_out
+		g_audio_output = audio_out
 
 		// Make our initial backbuffer
 		w,h : i32
-		SDL.GetWindowSize(state.window, &w, &h)
-		SDL_resize_offscreen_buffer(&state.backbuffer, {u32(w), u32(h)})
+		SDL.GetWindowSize(g_window, &w, &h)
+		SDL_resize_offscreen_buffer(&g_backbuffer, {u32(w), u32(h)})
 
 		// Initialize the Game's memory (we will pass it though to game layer)
-		state.game_memory.permanent_storage_size = mem.Megabyte*64
-		state.game_memory.permanent_storage,_ = mem.alloc(auto_cast state.game_memory.permanent_storage_size)
+		g_game_memory.permanent_storage_size = mem.Megabyte*64
+		g_game_memory.permanent_storage,_ = mem.alloc(auto_cast g_game_memory.permanent_storage_size)
 
-		state.game_memory.transient_storage_size = mem.Gigabyte*1
-		state.game_memory.transient_storage,_ = mem.alloc(auto_cast state.game_memory.transient_storage_size)
+		g_game_memory.transient_storage_size = mem.Gigabyte*1
+		g_game_memory.transient_storage,_ = mem.alloc(auto_cast g_game_memory.transient_storage_size)
 
-		sdl_state.total_size = state.game_memory.permanent_storage_size
-		sdl_state.game_memory_block = state.game_memory.permanent_storage
+		sdl_state.total_size = g_game_memory.permanent_storage_size
+		sdl_state.game_memory_block = g_game_memory.permanent_storage
 
 		// Test out our wav functionality
 		//wav_test()
 
-		state.frame_start = SDL.GetPerformanceCounter()
+		g_frame_start = SDL.GetPerformanceCounter()
 		return SDL.AppResult.CONTINUE
 	}
 
 	iter := proc "c" (appstate: rawptr) -> SDL.AppResult  {
 		context = runtime.default_context()
-		frame_start := state.frame_start
+		free_all(context.temp_allocator)
+		frame_start := g_frame_start
 
 		// automatic game.dll reloading when changed
-		dll_time, dll_time_err := os.last_write_time_by_name("game.dll")
-		reload := dll_time_err == os.ERROR_NONE && state.game_api.dll_time != dll_time
+		dll_fullpath := SDL_build_game_dll_fullpath("game.dll")
+		dll_time, dll_time_err := os.last_write_time_by_name(dll_fullpath)
+		reload := dll_time_err == os.ERROR_NONE && g_game_api.dll_time != dll_time
 		if reload {
 			new_api,ok := SDL_load_game_api()
 			if ok {
-				state.game_api_version += 1
-				SDL_unload_game_api(state.game_api)
-				state.game_api = new_api
+				g_game_api_version += 1
+				SDL_unload_game_api(g_game_api)
+				g_game_api = new_api
 			}
 		}
 
 		// reset transient storage per-frame
-		state.game_memory.transient_storage_size = 0
+		g_game_memory.transient_storage_size = 0
 
 		// Do Input stuff
-		new_input := &state.input[.NEW]
-		old_input := &state.input[.OLD]
+		new_input := &g_input[.NEW]
+		old_input := &g_input[.OLD]
 
 		// migrate the previous key states for keyboard
 		KEYBOARD_CIDX :: 0
@@ -318,7 +313,7 @@ main :: proc() {
 
 		// Update based on key events
 		// Right now we are hijacking the events from event callback
-		for event in state.sdl_pending_key_events {
+		for event in g_sdl_pending_key_events {
 			kevent : SDL.KeyboardEvent = event.key
 			is_down := kevent.down
 			if kevent.key == SDL.K_ESCAPE {
@@ -344,21 +339,21 @@ main :: proc() {
 				}
 			}
 		}
-		clear(&state.sdl_pending_key_events)
+		clear(&g_sdl_pending_key_events)
 
 		// Feed our audio stream if need be
 		game_audio_out := Game_Audio_Output_Buffer{
-			sample_rate = state.audio_out.sample_rate,
-			current_sine_sample = state.audio_out.current_sine_sample,
-			channel_num = state.audio_out.channel_num,
+			sample_rate = g_audio_output.sample_rate,
+			current_sine_sample = g_audio_output.current_sine_sample,
+			channel_num = g_audio_output.channel_num,
 			samples_to_write = make([]f32, 0)
 		}
 		defer delete(game_audio_out.samples_to_write)
 
 		// optionally provide audio samples for the game to fill
-		minimum_audio := state.audio_out.sample_rate * size_of(f32) / 2
+		minimum_audio := g_audio_output.sample_rate * size_of(f32) / 2
 		// TODO: latency is too big, also we MUST make sure the samples game writes are enough
-		queued_samples_count := SDL.GetAudioStreamQueued(state.audio_out.stream)
+		queued_samples_count := SDL.GetAudioStreamQueued(g_audio_output.stream)
 		if queued_samples_count < i32(minimum_audio) {
 			// TODO: Also this should be a temp alloc
 			game_audio_out.samples_to_write = make([]f32, 512)
@@ -373,22 +368,22 @@ main :: proc() {
 		}
 
 		// call update_and_render from platform agnostic code!
-		state.game_api.game_update_and_render(&state.game_memory, new_input, &state.backbuffer, &game_audio_out)
+		g_game_api.game_update_and_render(&g_game_memory, new_input, &g_backbuffer, &game_audio_out)
 
 		// test
 		if new_input.controllers[0].buttons[.MOVE_UP].ended_down {
-			sdl_visualize_last_audio_samples(&state.backbuffer,400)
+			sdl_visualize_last_audio_samples(&g_backbuffer,400)
 		}
 
-		SDL_display_buffer_to_window(state.window, &state.backbuffer)
+		SDL_display_buffer_to_window(g_window, &g_backbuffer)
 
-		SDL.RenderPresent(state.renderer)
-		state.audio_out.current_sine_sample = game_audio_out.current_sine_sample
+		SDL.RenderPresent(g_renderer)
+		g_audio_output.current_sine_sample = game_audio_out.current_sine_sample
 
 		if queued_samples_count < i32(minimum_audio) {
 			// to avoid floating point rounding errors
-			state.audio_out.current_sine_sample %= int(state.audio_out.sample_rate);
-			SDL.PutAudioStreamData(state.audio_out.stream, &game_audio_out.samples_to_write[0], auto_cast len(game_audio_out.samples_to_write) * size_of(f32));
+			g_audio_output.current_sine_sample %= int(g_audio_output.sample_rate);
+			SDL.PutAudioStreamData(g_audio_output.stream, &game_audio_out.samples_to_write[0], auto_cast len(game_audio_out.samples_to_write) * size_of(f32));
 		}
 
 
@@ -410,33 +405,33 @@ main :: proc() {
 			seconds_elapsed_for_frame = (f64(count) / f64(freq))
 		}
 		// reset frame_start for next frame
-		state.frame_start = frame_end
+		g_frame_start = frame_end
 
 		fps := (f64(freq) / f64(count))
 		fmt.printf("ms: %.2f - fps: %.2f\n", 1000*seconds_elapsed_for_frame, fps)
 
 		// Copy back our processed input to old input for next frame processing
-		temp := state.input[.OLD]
-		state.input[.OLD] = state.input[.NEW]
-		state.input[.NEW] = temp
+		temp := g_input[.OLD]
+		g_input[.OLD] = g_input[.NEW]
+		g_input[.NEW] = temp
 
 		return SDL.AppResult.CONTINUE;
 	}
 	events := proc "c" (appstate: rawptr, event: ^SDL.Event) -> SDL.AppResult {
 		context = runtime.default_context()
 
-		new_input := &state.input[.NEW]
+		new_input := &g_input[.NEW]
 
 		if event.type == SDL.EventType.QUIT {
 			return SDL.AppResult.SUCCESS;
 		} else if event.type == SDL.EventType.WINDOW_RESIZED {
 			// Resize our backbuffer with new window dimensions
 			w,h : i32
-			SDL.GetWindowSize(state.window, &w, &h)
-			SDL_resize_offscreen_buffer(&state.backbuffer, {u32(w), u32(h)})
+			SDL.GetWindowSize(g_window, &w, &h)
+			SDL_resize_offscreen_buffer(&g_backbuffer, {u32(w), u32(h)})
 		} else if event.type == SDL.EventType.KEY_DOWN || event.type == SDL.EventType.KEY_UP {
 			// pass the key event to our internal structure, to update in next _Iterate
-			append(&state.sdl_pending_key_events, event^)
+			append(&g_sdl_pending_key_events, event^)
 		}
 
 		return SDL.AppResult.CONTINUE;
@@ -444,6 +439,7 @@ main :: proc() {
 
 	quit := proc "c" (appstate: rawptr, r: SDL.AppResult) {
 		context = runtime.default_context()
+		_ = SDL.RemovePath("foo.hmi") // remove the input file..
 		fmt.println("quit")
 	}
 
@@ -490,16 +486,16 @@ sdl_visualize_last_audio_samples :: proc(backbuffer : ^Game_Offscreen_Buffer, sa
 	width_per_line := f32(window_w)/ f32(sample_count)
 	assert(width_per_line > 0)
 
-	total_samples := state.audio_out.channel_num * i32(sample_count)
+	total_samples := g_audio_output.channel_num * i32(sample_count)
 	// TODO: this should become a temp allocation!
 	data := make([]f32, total_samples)
 	defer delete(data)
 
-	SDL.GetAudioStreamData(state.audio_out.stream, auto_cast &data[0], total_samples * size_of(f32))
+	SDL.GetAudioStreamData(g_audio_output.stream, auto_cast &data[0], total_samples * size_of(f32))
 	for sample_idx in 0..<sample_count {
 		offset_x := width_per_line * f32(sample_idx)
 		// FIXME: We just output the Left or MONO channel for now
-		target_y := data[sample_idx * u32(state.audio_out.channel_num)] * f32(backbuffer.dim[1])/2
+		target_y := data[sample_idx * u32(g_audio_output.channel_num)] * f32(backbuffer.dim[1])/2
 		render_vertical_line_from_0(backbuffer, i32(target_y), i32(offset_x), i32(width_per_line), 0xffffffff)
 	}
 }
