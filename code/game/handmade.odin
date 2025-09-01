@@ -8,25 +8,12 @@ import "core:time"
 import "core:math"
 import "core:c"
 
-render_weird_gradient :: proc(backbuffer : ^Game_Offscreen_Buffer, offset_x : i32, offset_y : i32) {
-	for y in 0..<backbuffer.dim[1] {
-		for x in 0..<backbuffer.dim[0] {
-			pitch_in_u32 := backbuffer.dim[0]
-			color := (u32(i32(x)%255+offset_x)%255 << backbuffer.px_info.g_shift) | (u32(i32(y)%255+offset_y)%255 << backbuffer.px_info.b_shift)
-			//color := (u32(i32(x)%255+offset_x)%255 << backbuffer.px_info.r_shift) | (u32(i32(y)%255+offset_y)%255 << backbuffer.px_info.b_shift)
-			backbuffer.bitmap_memory[u32(y) * pitch_in_u32 + u32(x)] = color;
-		}
-	}
-}
-render_player :: proc(backbuffer : ^Game_Offscreen_Buffer, posx : int, posy : int) {
-	//color := u32(0xFFFFFFFF);
-	color := u32(0xFF0000FF);
-	dim := 10
-	for y in 0..<dim {
-		for x in 0..<dim {
+draw_rect :: proc(backbuffer : ^Game_Offscreen_Buffer, posx : f32, posy : f32, w : f32, h : f32, color : u32) {
+	for y in 0..<int(h) {
+		for x in 0..<int(w){
 			pitch_in_u32 := backbuffer.dim[0]
 			// This idx calculation is wrong, it just doesn't let the program crash :|
-			idx := i32(y+posy) * i32(pitch_in_u32) + i32(x+posx)
+			idx := i32(y+int(posy)) * i32(pitch_in_u32) + i32(x+int(posx))
 			if idx > 0 && idx < i32(backbuffer.dim[0] * backbuffer.dim[1]) {
 				backbuffer.bitmap_memory[u32(idx)] = color;
 			}
@@ -71,17 +58,16 @@ game_update_and_render :: proc(memory : ^Game_Memory, input : ^Game_Input, buffe
 	when false {
 		update_audio(audio_out, game_state.tone_hz, game_state.offset_x, game_state.offset_y)
 	}
-	render_weird_gradient(buffer, game_state.offset_x, game_state.offset_y)
 	if input.controllers[0].buttons[.MOVE_UP].ended_down do game_state.player_y-=1
 	if input.controllers[0].buttons[.MOVE_DOWN].ended_down do game_state.player_y+=1
 	if input.controllers[0].buttons[.MOVE_LEFT].ended_down do game_state.player_x-=1
 	if input.controllers[0].buttons[.MOVE_RIGHT].ended_down do game_state.player_x+=1
-	render_player(buffer, game_state.player_x, game_state.player_y)
+	draw_rect(buffer, 0, 0, auto_cast buffer.dim[0], auto_cast buffer.dim[1], 0x000FFFFF)
+	draw_rect(buffer, game_state.player_x, game_state.player_y, 10, 10, 0xFFFFFFFF)
 
 	for idx in 0..<5 {
 		if input.controllers[0].mouse_buttons[idx].ended_down {
-			render_player(buffer, 200 + 20 * idx, 200)
-
+			draw_rect(buffer, auto_cast (200 + 20 * idx), 200, 10, 10, 0xFF000000)
 		}
 	}
 

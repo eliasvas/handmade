@@ -15,6 +15,7 @@ import "core:c"
 import SDL "vendor:sdl3"
 
 // These could be inside mainproc BUT to support wasm we do the event thing, so a no go..
+target_fps :: 60.0
 g_window : ^SDL.Window
 g_renderer : ^SDL.Renderer
 g_backbuffer : Game_Offscreen_Buffer
@@ -407,7 +408,6 @@ main :: proc() {
 
 		seconds_elapsed_for_frame := (f64(count) / f64(freq))
 
-		target_fps := 60.0
 		target_seconds_per_frame := 1.0 / target_fps
 
 		if seconds_elapsed_for_frame < target_seconds_per_frame {
@@ -434,6 +434,7 @@ main :: proc() {
 		context = runtime.default_context()
 
 		new_input := &g_input[.NEW]
+		new_input.seconds_to_advance_over_update = target_fps
 
 		if event.type == SDL.EventType.QUIT {
 			return SDL.AppResult.SUCCESS;
