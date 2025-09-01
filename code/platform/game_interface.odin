@@ -50,6 +50,11 @@ Game_Controller_Input :: struct {
 	stick_x : f32,
 	stick_y : f32,
 
+	mouse_buttons: [5]Game_Button_State,
+	mouse_x : f32,
+	mouse_y : f32,
+	mouse_z : f32, // ??
+
 	buttons : [Game_Button_Kind]Game_Button_State,
 }
 

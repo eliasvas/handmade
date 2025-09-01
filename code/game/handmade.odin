@@ -19,8 +19,8 @@ render_weird_gradient :: proc(backbuffer : ^Game_Offscreen_Buffer, offset_x : i3
 	}
 }
 render_player :: proc(backbuffer : ^Game_Offscreen_Buffer, posx : int, posy : int) {
-	color := u32(0xFFFFFFFF);
-	//color := u32(0xFF0000FF);
+	//color := u32(0xFFFFFFFF);
+	color := u32(0xFF0000FF);
 	dim := 10
 	for y in 0..<dim {
 		for x in 0..<dim {
@@ -77,4 +77,12 @@ game_update_and_render :: proc(memory : ^Game_Memory, input : ^Game_Input, buffe
 	if input.controllers[0].buttons[.MOVE_LEFT].ended_down do game_state.player_x-=1
 	if input.controllers[0].buttons[.MOVE_RIGHT].ended_down do game_state.player_x+=1
 	render_player(buffer, game_state.player_x, game_state.player_y)
+
+	for idx in 0..<5 {
+		if input.controllers[0].mouse_buttons[idx].ended_down {
+			render_player(buffer, 200 + 20 * idx, 200)
+
+		}
+	}
+
 }

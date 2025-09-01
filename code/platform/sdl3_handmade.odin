@@ -85,8 +85,10 @@ SDL_process_keyboard_msg :: proc(new_state : ^Game_Button_State, is_down : bool)
 	// FIXME: why does this assert trigger? maybe because processing happens in eventrather than iter?
 	//assert(new_state.ended_down != is_down)
 	//new_state.ended_down = is_down
-	new_state.ended_down = is_down
-	new_state.half_transition_count+=1
+	if new_state.ended_down != is_down {
+		new_state.ended_down = is_down
+		new_state.half_transition_count+=1
+	}
 }
 SDL_process_gamepad_msg :: proc(old_state : ^Game_Button_State, new_state : ^Game_Button_State, is_down : bool) {
 	new_state.ended_down = is_down
@@ -266,6 +268,17 @@ main :: proc() {
 		}
 
 		//assert(!new_input.controllers[0].buttons[.MOVE_UP].ended_down)
+
+		// Update mouse stuff
+		mx,my : f32
+		mflags : SDL.MouseButtonFlags = SDL.GetMouseState(&mx, &my)
+		SDL_process_keyboard_msg(&new_input.controllers[0].mouse_buttons[0], SDL.MouseButtonFlag.LEFT in mflags)
+		SDL_process_keyboard_msg(&new_input.controllers[0].mouse_buttons[1], SDL.MouseButtonFlag.MIDDLE in mflags)
+		SDL_process_keyboard_msg(&new_input.controllers[0].mouse_buttons[2], SDL.MouseButtonFlag.RIGHT in mflags)
+		SDL_process_keyboard_msg(&new_input.controllers[0].mouse_buttons[3], SDL.MouseButtonFlag.X1 in mflags)
+		SDL_process_keyboard_msg(&new_input.controllers[0].mouse_buttons[4], SDL.MouseButtonFlag.X2 in mflags)
+		new_input.controllers[0].mouse_x = mx
+		new_input.controllers[0].mouse_y = my
 
 		// Update all controllers based on SDL gamepads
 		gamepad_count : i32
