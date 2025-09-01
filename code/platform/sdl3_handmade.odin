@@ -280,6 +280,7 @@ main :: proc() {
 		SDL_process_keyboard_msg(&new_input.controllers[0].mouse_buttons[4], SDL.MouseButtonFlag.X2 in mflags)
 		new_input.controllers[0].mouse_x = mx
 		new_input.controllers[0].mouse_y = my
+		new_input.dt = 1.0 / target_fps
 
 		// Update all controllers based on SDL gamepads
 		gamepad_count : i32
@@ -434,7 +435,6 @@ main :: proc() {
 		context = runtime.default_context()
 
 		new_input := &g_input[.NEW]
-		new_input.seconds_to_advance_over_update = target_fps
 
 		if event.type == SDL.EventType.QUIT {
 			return SDL.AppResult.SUCCESS;

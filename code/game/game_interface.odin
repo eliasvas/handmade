@@ -61,7 +61,7 @@ Game_Controller_Input :: struct {
 // 0 -> Keyboard & 1..4 -> Gamepads
 Game_Input_Index :: enum { OLD, NEW }
 Game_Input :: struct {
-	seconds_to_advance_over_update : f32,
+	dt : f32,
 	controllers : [5] Game_Controller_Input,
 }
 

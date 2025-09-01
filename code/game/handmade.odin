@@ -8,11 +8,21 @@ import "core:time"
 import "core:math"
 import "core:c"
 
-draw_rect :: proc(backbuffer : ^Game_Offscreen_Buffer, posx : f32, posy : f32, w : f32, h : f32, color : u32) {
+// TODO: this is too slow I think, @speedup
+draw_rect :: proc(backbuffer : ^Game_Offscreen_Buffer, posx : f32, posy : f32, w : f32, h : f32, red : f32, green : f32, blue : f32) {
+	black := u32(0xFFFFFFFF)
+	black ~= (u32(0xFF) << backbuffer.px_info.r_shift)
+	black ~= (u32(0xFF) << backbuffer.px_info.b_shift)
+	black ~= (u32(0xFF) << backbuffer.px_info.b_shift)
 	for y in 0..<int(h) {
 		for x in 0..<int(w){
 			pitch_in_u32 := backbuffer.dim[0]
 			// This idx calculation is wrong, it just doesn't let the program crash :|
+			color := black
+			color |= (u32(red*255.0) << backbuffer.px_info.r_shift)
+			color |= (u32(green*255.0) << backbuffer.px_info.g_shift)
+			color |= (u32(blue*255.0) << backbuffer.px_info.b_shift)
+
 			idx := i32(y+int(posy)) * i32(pitch_in_u32) + i32(x+int(posx))
 			if idx > 0 && idx < i32(backbuffer.dim[0] * backbuffer.dim[1]) {
 				backbuffer.bitmap_memory[u32(idx)] = color;
@@ -58,17 +68,43 @@ game_update_and_render :: proc(memory : ^Game_Memory, input : ^Game_Input, buffe
 	when false {
 		update_audio(audio_out, game_state.tone_hz, game_state.offset_x, game_state.offset_y)
 	}
-	if input.controllers[0].buttons[.MOVE_UP].ended_down do game_state.player_y-=1
-	if input.controllers[0].buttons[.MOVE_DOWN].ended_down do game_state.player_y+=1
-	if input.controllers[0].buttons[.MOVE_LEFT].ended_down do game_state.player_x-=1
-	if input.controllers[0].buttons[.MOVE_RIGHT].ended_down do game_state.player_x+=1
-	draw_rect(buffer, 0, 0, auto_cast buffer.dim[0], auto_cast buffer.dim[1], 0x000FFFFF)
-	draw_rect(buffer, game_state.player_x, game_state.player_y, 10, 10, 0xFFFFFFFF)
+	speed := f32(100)
+	if input.controllers[0].buttons[.MOVE_UP].ended_down do game_state.player_y-=speed*input.dt
+	if input.controllers[0].buttons[.MOVE_DOWN].ended_down do game_state.player_y+=speed*input.dt
+	if input.controllers[0].buttons[.MOVE_LEFT].ended_down do game_state.player_x-=speed*input.dt
+	if input.controllers[0].buttons[.MOVE_RIGHT].ended_down do game_state.player_x+=speed*input.dt
+	draw_rect(buffer, 0, 0, auto_cast buffer.dim[0], auto_cast buffer.dim[1], 0,0,1)
 
-	for idx in 0..<5 {
-		if input.controllers[0].mouse_buttons[idx].ended_down {
-			draw_rect(buffer, auto_cast (200 + 20 * idx), 200, 10, 10, 0xFF000000)
+	tilemap_bg : [16*9]u8= {
+		1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1,
+		1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1,
+		1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1,
+		1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1,
+		0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,
+		1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1,
+		1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1,
+		1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1,
+		1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1,
+	}
+	TILEMAP_BG_W :: 50
+	TILEMAP_BG_H :: 50
+
+	// Draw a simple backgorund via tilemap
+	for row in 0..<16 {
+		for col in 0..<9 {
+			tile_val := tilemap_bg[row + col*16]
+			color := f32(tile_val) * 0.85
+			draw_rect(buffer, f32(row)*TILEMAP_BG_W, f32(col)*TILEMAP_BG_H, TILEMAP_BG_W, TILEMAP_BG_H, color,color,color)
 		}
 	}
+	draw_rect(buffer, game_state.player_x, game_state.player_y, TILEMAP_BG_W, TILEMAP_BG_H, 1,1,1)
+
+	/*
+	for idx in 0..<5 {
+		if input.controllers[0].mouse_buttons[idx].ended_down {
+			draw_rect(buffer, auto_cast (200 + 20 * idx), 200, 10, 10, 0,1,0)
+		}
+	}
+	*/
 
 }
