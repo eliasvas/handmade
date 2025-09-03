@@ -1,5 +1,6 @@
 package game
 
+import g "../game_api"
 import "base:runtime"
 import "core:fmt"
 import "base:intrinsics"
@@ -8,12 +9,38 @@ import "core:time"
 import "core:math"
 import "core:c"
 
+Tile_Map :: struct {
+	count : [2]u32,
+	upper_left : [2]f32,
+	tile_dim : [2]f32,
+	tiles : []u32,
+}
+World :: struct {
+	tile_count : [2]u32,
+	tilemaps : []Tile_Map,
+}
+get_tilemap_from_world :: proc(w : ^World, tilemap_idx : [2]u32) -> ^ Tile_Map {
+	if tilemap_idx.x > w.tile_count.x || tilemap_idx.y > w.tile_count.y do return nil
+	return &w.tilemaps[w.tile_count.x*tilemap_idx.y + tilemap_idx.x]
+}
+tilemap_is_tile_empty :: proc(tm : ^Tile_Map, tile_idx : [2]u32) -> bool {
+	if tile_idx.x > tm.count.x || tile_idx.y > tm.count.y do return false
+	return get_tilemap_value(tm, tile_idx) == 0
+}
+
+get_tilemap_value :: proc(tm : ^Tile_Map, tile_idx : [2]u32) -> u32{
+	return tm.tiles[tile_idx.y*tm.count.x + tile_idx.x]
+}
+
 // TODO: this is too slow I think, @speedup
-draw_rect :: proc(backbuffer : ^Game_Offscreen_Buffer, posx : f32, posy : f32, w : f32, h : f32, red : f32, green : f32, blue : f32) {
+draw_rect :: proc(backbuffer : ^g.Game_Offscreen_Buffer, posx : f32, posy : f32, w : f32, h : f32, red : f32, green : f32, blue : f32) {
+	/*
 	black := u32(0xFFFFFFFF)
 	black ~= (u32(0xFF) << backbuffer.px_info.r_shift)
 	black ~= (u32(0xFF) << backbuffer.px_info.b_shift)
 	black ~= (u32(0xFF) << backbuffer.px_info.b_shift)
+	*/
+	black := u32(0)
 	for y in 0..<int(h) {
 		for x in 0..<int(w){
 			pitch_in_u32 := backbuffer.dim[0]
@@ -32,7 +59,7 @@ draw_rect :: proc(backbuffer : ^Game_Offscreen_Buffer, posx : f32, posy : f32, w
 }
 
 // TODO: should probably add codepaths for MONO/STEREO
-update_audio :: proc(audio_out : ^Game_Audio_Output_Buffer, tone_hz : i16, offset_x : i32, offset_y : i32) {
+update_audio :: proc(audio_out : ^g.Game_Audio_Output_Buffer, tone_hz : i16, offset_x : i32, offset_y : i32) {
 	volume := f32(0.05)
 	for frame_idx:=0; frame_idx < len(audio_out.samples_to_write); {
 		for channel in 0..<audio_out.channel_num {
@@ -46,16 +73,15 @@ update_audio :: proc(audio_out : ^Game_Audio_Output_Buffer, tone_hz : i16, offse
 }
 
 @(export)
-game_update_and_render :: proc(memory : ^Game_Memory, input : ^Game_Input, buffer : ^Game_Offscreen_Buffer, audio_out : ^Game_Audio_Output_Buffer) {
+game_update_and_render :: proc(memory : ^g.Game_Memory, input : ^g.Game_Input, buffer : ^g.Game_Offscreen_Buffer, audio_out : ^g.Game_Audio_Output_Buffer) {
 	// NOTE(inv): For now permanent_storage holds just the game state..
-	game_state : ^Game_State = auto_cast memory.permanent_storage
+	game_state : ^g.Game_State = auto_cast memory.permanent_storage
 	if !memory.is_initialized {
 		game_state.tone_hz = 440
 
 		memory.is_initialized = true
 
-		game_state.player_x = 100
-		game_state.player_y = 100
+		game_state.player = {100,100}
 
 		/*
 		data := platform_read_entire_file("sdl3_handmade.exe")
@@ -68,43 +94,60 @@ game_update_and_render :: proc(memory : ^Game_Memory, input : ^Game_Input, buffe
 	when false {
 		update_audio(audio_out, game_state.tone_hz, game_state.offset_x, game_state.offset_y)
 	}
-	speed := f32(100)
-	if input.controllers[0].buttons[.MOVE_UP].ended_down do game_state.player_y-=speed*input.dt
-	if input.controllers[0].buttons[.MOVE_DOWN].ended_down do game_state.player_y+=speed*input.dt
-	if input.controllers[0].buttons[.MOVE_LEFT].ended_down do game_state.player_x-=speed*input.dt
-	if input.controllers[0].buttons[.MOVE_RIGHT].ended_down do game_state.player_x+=speed*input.dt
-	draw_rect(buffer, 0, 0, auto_cast buffer.dim[0], auto_cast buffer.dim[1], 0,0,1)
 
-	tilemap_bg : [16*9]u8= {
-		1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1,
-		1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1,
-		1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1,
-		1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1,
-		0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,
-		1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1,
-		1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1,
-		1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1,
-		1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1,
+	// TILE BULLSHIT
+	TILE_PX_W :: 50
+	TILE_PX_H :: 50
+	tm01 := Tile_Map {
+		count = {16, 9},
+		upper_left = {0,0},
+		tile_dim = {TILE_PX_W, TILE_PX_H},
+		tiles = {
+			1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1,
+			1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1,
+			1,0,1,1, 0,0,0,0, 1,0,0,0, 0,0,0,1,
+			1,1,1,0, 0,0,0,0, 1,1,0,0, 0,0,0,1,
+			0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,
+			1,1,1,0, 0,0,0,0, 1,1,0,0, 0,0,0,1,
+			1,0,1,1, 0,0,0,0, 1,0,0,0, 0,0,0,1,
+			1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1,
+			1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1,
+		},
 	}
-	TILEMAP_BG_W :: 50
-	TILEMAP_BG_H :: 50
+	w := World {
+		tile_count = {2,2},
+		tilemaps = { tm01,tm01,tm01,tm01 },
+	}
 
-	// Draw a simple backgorund via tilemap
+	tilemap_idx := [2]u32{0,0}
+
+	// RENDERING CODE
+	draw_rect(buffer, 0, 0, auto_cast buffer.dim[0], auto_cast buffer.dim[1], 0.4,0.4,0.95)
 	for row in 0..<16 {
 		for col in 0..<9 {
-			tile_val := tilemap_bg[row + col*16]
+			tile_val := get_tilemap_value(get_tilemap_from_world(&w, tilemap_idx), {auto_cast row, auto_cast col})
 			color := f32(tile_val) * 0.85
-			draw_rect(buffer, f32(row)*TILEMAP_BG_W, f32(col)*TILEMAP_BG_H, TILEMAP_BG_W, TILEMAP_BG_H, color,color,color)
+			if tile_val > 0 {
+				draw_rect(buffer, f32(row)*TILE_PX_W, f32(col)*TILE_PX_H, TILE_PX_W, TILE_PX_H, color,color,color)
+			}
 		}
 	}
-	draw_rect(buffer, game_state.player_x, game_state.player_y, TILEMAP_BG_W, TILEMAP_BG_H, 1,1,1)
+	draw_rect(buffer, game_state.player.x - TILE_PX_W/2, game_state.player.y - TILE_PX_H, TILE_PX_W, TILE_PX_H, 1,0,0)
 
-	/*
-	for idx in 0..<5 {
-		if input.controllers[0].mouse_buttons[idx].ended_down {
-			draw_rect(buffer, auto_cast (200 + 20 * idx), 200, 10, 10, 0,1,0)
-		}
+	// MOVEMENT CODE
+	speed := f32(100)
+	new_player_pos := game_state.player
+
+	if input.controllers[0].buttons[.MOVE_UP].ended_down do new_player_pos.y -=speed*input.dt
+	if input.controllers[0].buttons[.MOVE_DOWN].ended_down do new_player_pos.y +=speed*input.dt
+	if input.controllers[0].buttons[.MOVE_LEFT].ended_down do new_player_pos.x -=speed*input.dt
+	if input.controllers[0].buttons[.MOVE_RIGHT].ended_down do new_player_pos.x +=speed*input.dt
+
+	tilemap := get_tilemap_from_world(&w, tilemap_idx)
+	new_player_tile_pos := new_player_pos / tilemap.tile_dim
+	target_tile_empty := tilemap_is_tile_empty(tilemap, {u32(new_player_tile_pos.x), u32(new_player_tile_pos.y)})
+	if target_tile_empty {
+		game_state.player = new_player_pos
 	}
-	*/
 
 }

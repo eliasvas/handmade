@@ -1,4 +1,4 @@
-package game
+package game_api
 
 import "core:dynlib"
 import "core:os"
@@ -80,8 +80,7 @@ Game_State :: struct {
 	offset_x : i32,
 	offset_y : i32,
 
-	player_x : f32,
-	player_y : f32,
+	player : [2]f32,
 }
 
 Game_API :: struct {

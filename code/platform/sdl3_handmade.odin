@@ -1,5 +1,6 @@
 package platform
 
+import g "../game_api"
 import "core:dynlib"
 import "core:os"
 import "core:c/libc"
@@ -18,13 +19,13 @@ import SDL "vendor:sdl3"
 target_fps :: 60.0
 g_window : ^SDL.Window
 g_renderer : ^SDL.Renderer
-g_backbuffer : Game_Offscreen_Buffer
-g_input : [Game_Input_Index]Game_Input
+g_backbuffer : g.Game_Offscreen_Buffer
+g_input : [g.Game_Input_Index]g.Game_Input
 g_sdl_pending_key_events : [dynamic]SDL.Event // TODO: remove this, no dynamic allocations!
 g_audio_output : SDL_Audio_Output_Buffer
 g_frame_start : u64
-g_game_memory : Game_Memory
-g_game_api : Game_API
+g_game_memory : g.Game_Memory
+g_game_api : g.Game_API
 g_game_api_version : u32
 
 SDL_Audio_Output_Buffer :: struct {
@@ -50,7 +51,7 @@ SDL_State :: struct {
 sdl_state : SDL_State
 
 // Will delete previous offscreen buffer and allocate a new one for us
-SDL_resize_offscreen_buffer :: proc(buffer : ^Game_Offscreen_Buffer, new_dim : [2]u32) {
+SDL_resize_offscreen_buffer :: proc(buffer : ^g.Game_Offscreen_Buffer, new_dim : [2]u32) {
 	if len(buffer.bitmap_memory) > 0 {
 		delete(buffer.bitmap_memory)
 	}
@@ -62,7 +63,7 @@ SDL_resize_offscreen_buffer :: proc(buffer : ^Game_Offscreen_Buffer, new_dim : [
 		buffer.dim = new_dim
 		buffer.bytes_per_pixel = 4
 		buffer.bitmap_memory = make([]u32, buffer.dim.x*buffer.dim.y*buffer.bytes_per_pixel)
-		buffer.px_info = Pixel_Format_Info{
+		buffer.px_info = g.Pixel_Format_Info{
 			r_shift = pixel_format_details.Rshift,
 			g_shift = pixel_format_details.Gshift,
 			b_shift = pixel_format_details.Bshift,
@@ -71,7 +72,7 @@ SDL_resize_offscreen_buffer :: proc(buffer : ^Game_Offscreen_Buffer, new_dim : [
 }
 
 // Will write the contents of our offscreen buffer to the window's surface
-SDL_display_buffer_to_window :: proc(window : ^SDL.Window, buffer : ^Game_Offscreen_Buffer) {
+SDL_display_buffer_to_window :: proc(window : ^SDL.Window, buffer : ^g.Game_Offscreen_Buffer) {
 	surface := SDL.GetWindowSurface(g_window);
 	if surface != nil{
 		intrinsics.mem_copy(
@@ -82,7 +83,7 @@ SDL_display_buffer_to_window :: proc(window : ^SDL.Window, buffer : ^Game_Offscr
 	}
 }
 
-SDL_process_keyboard_msg :: proc(new_state : ^Game_Button_State, is_down : bool) {
+SDL_process_keyboard_msg :: proc(new_state : ^g.Game_Button_State, is_down : bool) {
 	// FIXME: why does this assert trigger? maybe because processing happens in eventrather than iter?
 	//assert(new_state.ended_down != is_down)
 	//new_state.ended_down = is_down
@@ -91,11 +92,11 @@ SDL_process_keyboard_msg :: proc(new_state : ^Game_Button_State, is_down : bool)
 		new_state.half_transition_count+=1
 	}
 }
-SDL_process_gamepad_msg :: proc(old_state : ^Game_Button_State, new_state : ^Game_Button_State, is_down : bool) {
+SDL_process_gamepad_msg :: proc(old_state : ^g.Game_Button_State, new_state : ^g.Game_Button_State, is_down : bool) {
 	new_state.ended_down = is_down
 	new_state.half_transition_count = new_state.ended_down != old_state.ended_down ? 1 : 0
 }
-SDL_load_game_api :: proc() -> (Game_API, bool) {
+SDL_load_game_api :: proc() -> (g.Game_API, bool) {
 	dll_fullpath := SDL_build_game_dll_fullpath("game.dll")
 	dll_time, dll_time_err := os.last_write_time_by_name(dll_fullpath)
 	if dll_time_err != os.ERROR_NONE {
@@ -114,8 +115,8 @@ SDL_load_game_api :: proc() -> (Game_API, bool) {
 		fmt.println("Failed loading game DLL")
 		return {}, false
 	}
-	api := Game_API {
-		game_update_and_render = cast(proc(memory : ^Game_Memory, input : ^Game_Input, buffer : ^Game_Offscreen_Buffer, audio_out : ^Game_Audio_Output_Buffer))(dynlib.symbol_address(lib, "game_update_and_render") or_else nil),
+	api := g.Game_API {
+		game_update_and_render = cast(proc(memory : ^g.Game_Memory, input : ^g.Game_Input, buffer : ^g.Game_Offscreen_Buffer, audio_out : ^g.Game_Audio_Output_Buffer))(dynlib.symbol_address(lib, "game_update_and_render") or_else nil),
 		dll_time = dll_time,
 		lib = lib,
 	}
@@ -126,7 +127,7 @@ SDL_load_game_api :: proc() -> (Game_API, bool) {
 	}
 	return api, true
 }
-SDL_unload_game_api :: proc(api : Game_API) {
+SDL_unload_game_api :: proc(api : g.Game_API) {
 	if api.lib != nil {
 		dynlib.unload_library(api.lib)
 	}
@@ -144,7 +145,7 @@ SDL_end_recording_input :: proc(sdl_state : ^SDL_State) {
 	SDL.CloseIO(sdl_state.recording_handle);
 	sdl_state.input_recording_index = 0
 }
-SDL_record_input :: proc(sdl_state : ^SDL_State, new_input : ^Game_Input) {
+SDL_record_input :: proc(sdl_state : ^SDL_State, new_input : ^g.Game_Input) {
 	SDL.WriteIO( sdl_state.recording_handle, new_input, auto_cast size_of(new_input^));
 }
 
@@ -158,7 +159,7 @@ SDL_end_input_playback :: proc(sdl_state : ^SDL_State) {
 	SDL.CloseIO(sdl_state.playback_handle);
 	sdl_state.input_playing_index = 0
 }
-SDL_playback_input :: proc(sdl_state : ^SDL_State, new_input : ^Game_Input) {
+SDL_playback_input :: proc(sdl_state : ^SDL_State, new_input : ^g.Game_Input) {
 	bytes_read := SDL.ReadIO( sdl_state.playback_handle, new_input, auto_cast size_of(new_input^));
 	if bytes_read == 0 {
 		// if no bytes were read, we go back to the beginning
@@ -357,7 +358,7 @@ main :: proc() {
 		clear(&g_sdl_pending_key_events)
 
 		// Feed our audio stream if need be
-		game_audio_out := Game_Audio_Output_Buffer{
+		game_audio_out := g.Game_Audio_Output_Buffer{
 			sample_rate = g_audio_output.sample_rate,
 			current_sine_sample = g_audio_output.current_sine_sample,
 			channel_num = g_audio_output.channel_num,
@@ -473,7 +474,7 @@ platform_write_entire_file :: proc(filename : cstring, data : []u8) -> (ok : boo
 	return ok
 }
 
-render_vertical_line_from_0 :: proc(backbuffer : ^Game_Offscreen_Buffer, target_y : i32, offset_x : i32, line_width : i32, color : u32) {
+render_vertical_line_from_0 :: proc(backbuffer : ^g.Game_Offscreen_Buffer, target_y : i32, offset_x : i32, line_width : i32, color : u32) {
 	if target_y > 0 {
 		for y in 0..<target_y {
 			y_coord := i32(backbuffer.dim[1]/2) - y
@@ -495,7 +496,7 @@ render_vertical_line_from_0 :: proc(backbuffer : ^Game_Offscreen_Buffer, target_
 	}
 }
 
-sdl_visualize_last_audio_samples :: proc(backbuffer : ^Game_Offscreen_Buffer, sample_count : u32) {
+sdl_visualize_last_audio_samples :: proc(backbuffer : ^g.Game_Offscreen_Buffer, sample_count : u32) {
 	window_w := backbuffer.dim[0]
 	width_per_line := f32(window_w)/ f32(sample_count)
 	assert(width_per_line > 0)
