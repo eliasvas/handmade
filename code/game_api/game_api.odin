@@ -81,6 +81,7 @@ Game_State :: struct {
 	offset_y : i32,
 
 	player : [2]f32,
+	tilemap_idx : [2]i32,
 }
 
 Game_API :: struct {

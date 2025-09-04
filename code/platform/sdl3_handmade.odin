@@ -105,9 +105,13 @@ SDL_load_game_api :: proc() -> (g.Game_API, bool) {
 	}
 	dll_copy_name := fmt.tprintf("game_{}.dll", g_game_api_version)
 	dll_copy_fullpath := SDL_build_game_dll_fullpath(dll_copy_name)
-	copy_cmd := fmt.ctprintf("copy {} {}", dll_fullpath, dll_copy_fullpath)
+
+when ODIN_OS == .Windows {
+}
+
+  copy_cmd := fmt.ctprintf("{} {} {}", (ODIN_OS == .Windows) ? "copy" : "cp", dll_fullpath, dll_copy_fullpath)
 	if libc.system(copy_cmd) != 0 {
-		fmt.println("Failed to copy game.dll to {}", dll_copy_fullpath)
+		fmt.println("Failed to copy game.dll to ", dll_copy_fullpath)
 		return {}, false
 	}
 	lib, lib_ok := dynlib.load_library(dll_copy_fullpath)
@@ -183,7 +187,7 @@ main :: proc() {
 			return SDL.AppResult.FAILURE;
 		}
 		// Create a window
-		g_window = SDL.CreateWindow("Handmade Hero", 768, 512, flags = {.RESIZABLE})
+		g_window = SDL.CreateWindow("Handmade Hero", 800, 450, flags = {.RESIZABLE})
 		if g_window == nil {
 			SDL.Log("Window creation Failed!")
 			return SDL.AppResult.FAILURE
